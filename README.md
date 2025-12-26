@@ -214,7 +214,7 @@ Points are awarded based on strategic placement and puzzle-solving skill. Both h
 
 ### Project Structure
 ```
-DAA PROJECT/
+Slant-Game/
 ├── backend/
 │   ├── app.py              # Flask API server
 │   ├── game_logic.py       # Core game logic and graph algorithms
