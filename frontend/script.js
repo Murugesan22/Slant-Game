@@ -47,10 +47,45 @@ undoBtn.addEventListener('click', undoLastMove);
 multiplayerBtn.addEventListener('click', toggleMultiplayerMode);
 solveBtn.addEventListener('click', solveGame);
 
+// Help button for instructions modal
+const helpBtn = document.getElementById('help-btn');
+const instructionsModal = document.getElementById('instructions-modal');
+const closeInstructionsBtn = document.getElementById('close-instructions-btn');
+
+helpBtn.addEventListener('click', () => {
+    console.log("Help button clicked");
+    instructionsModal.classList.remove('hidden');
+    // Force visibility
+    instructionsModal.style.display = 'flex';
+    instructionsModal.style.opacity = '1';
+    instructionsModal.style.pointerEvents = 'auto';
+    playSound('click');
+});
+
+closeInstructionsBtn.addEventListener('click', () => {
+    instructionsModal.classList.add('hidden');
+    // Reset styles
+    instructionsModal.style.display = '';
+    instructionsModal.style.opacity = '';
+    instructionsModal.style.pointerEvents = '';
+    playSound('clear');
+});
+
+// Close modal on background click
+instructionsModal.addEventListener('click', (e) => {
+    if (e.target === instructionsModal) {
+        instructionsModal.classList.add('hidden');
+        instructionsModal.style.display = '';
+        instructionsModal.style.opacity = '';
+        instructionsModal.style.pointerEvents = '';
+        playSound('clear');
+    }
+});
+
 // Resume Audio Context on any interaction (Chrome Policy)
 document.addEventListener('click', () => {
-    if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+    if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(e => console.log("Audio resume failed", e));
     }
 }, { once: true });
 
@@ -210,6 +245,15 @@ function renderBoard(state) {
         }
     }
 
+    // Update Scores
+    if (state.scores) {
+        const humanScoreEl = document.getElementById('score-human');
+        const cpuScoreEl = document.getElementById('score-cpu');
+
+        if (humanScoreEl) humanScoreEl.textContent = state.scores.HUMAN || 0;
+        if (cpuScoreEl) cpuScoreEl.textContent = state.scores.CPU || 0;
+    }
+
     // Check for win
     checkGameStatus(state);
 }
@@ -225,6 +269,20 @@ const winContent = document.querySelector('.win-content h2');
 const winMsg = document.querySelector('.win-content p');
 
 function checkGameStatus(state) {
+    // Helper function to clean up unwanted buttons
+    const cleanupExtraButtons = () => {
+        const winContentDiv = document.querySelector('.win-content');
+        if (winContentDiv) {
+            const allButtons = winContentDiv.querySelectorAll('button');
+            allButtons.forEach(btn => {
+                // Only keep the close button
+                if (btn.id !== 'close-win-btn') {
+                    btn.remove();
+                }
+            });
+        }
+    };
+
     if (state.status === "WIN_HUMAN" || state.status === "WIN_CPU" || state.status === "DRAW" || state.status === "COMPLETED") {
         if (winOverlay.classList.contains('hidden')) {
             setTimeout(() => {
@@ -246,6 +304,9 @@ function checkGameStatus(state) {
                     statusEl.style.color = "#fbbf24";
                 }
 
+                // Clean up any unwanted buttons
+                cleanupExtraButtons();
+
             }, 100);
             statusEl.textContent = winContent.textContent;
         }
@@ -257,6 +318,10 @@ function checkGameStatus(state) {
         winContent.textContent = "Game Over";
         winMsg.textContent = "Board filled with constraint violations. Greedy algorithm limitations encountered.";
         winOverlay.classList.remove('hidden');
+
+        // CRITICAL: Remove any Show Graph button
+        cleanupExtraButtons();
+
         playSound('error');
     } else {
         if (!winOverlay.classList.contains('hidden')) {
@@ -269,11 +334,17 @@ function checkGameStatus(state) {
 }
 
 // Sound Context
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let audioCtx;
+try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+} catch (e) {
+    console.warn("AudioContext not supported:", e);
+}
 
 function playSound(type) {
+    if (!audioCtx) return;
     if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+        audioCtx.resume().catch(e => console.log("Audio resume failed", e));
     }
     const osc = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
@@ -470,134 +541,7 @@ async function handleCellDblClick(r, c) {
 }
 
 // Update Render to show Turn
-function renderBoard(state) {
-    // ... (grid building same as before)
-    const size = state.size;
-    const currentCells = document.querySelectorAll('.cell');
-    const shouldRebuild = currentCells.length !== size * size;
 
-    if (shouldRebuild) {
-        boardEl.innerHTML = '';
-        const totalSize = (size * CELL_SIZE) + ((size - 1) * GRID_GAP);
-        boardEl.style.gridTemplateColumns = `repeat(${size}, ${CELL_SIZE}px)`;
-        boardEl.style.gap = `${GRID_GAP}px`;
-        boardEl.style.width = `${totalSize}px`;
-        boardEl.style.height = `${totalSize}px`;
-
-        for (let r = 0; r < size; r++) {
-            for (let c = 0; c < size; c++) {
-                const cell = document.createElement('div');
-                cell.classList.add('cell');
-                cell.dataset.r = r;
-                cell.dataset.c = c;
-                cell.addEventListener('click', (e) => handleCellClickWithTimer(r, c, e));
-                boardEl.appendChild(cell);
-            }
-        }
-    }
-
-    // Cells
-    const cells = document.querySelectorAll('.cell');
-    cells.forEach(cell => {
-        const r = parseInt(cell.dataset.r);
-        const c = parseInt(cell.dataset.c);
-        const val = state.grid[r][c];
-
-        const hasL = cell.classList.contains('slash-L');
-        const hasR = cell.classList.contains('slash-R');
-
-        if (val === 'L' && !hasL) {
-            cell.classList.remove('slash-R');
-            cell.classList.add('slash-L');
-        } else if (val === 'R' && !hasR) {
-            cell.classList.remove('slash-L');
-            cell.classList.add('slash-R');
-        } else if (val === null) {
-            cell.classList.remove('slash-L', 'slash-R');
-        }
-
-        // FIXED: Add loop detection logic to second renderBoard function
-        cell.classList.remove('in-loop');
-        if (state.loop_cells && state.loop_cells.length > 0) {
-            const isInLoop = state.loop_cells.some(loopCell =>
-                loopCell[0] === r && loopCell[1] === c
-            );
-            if (isInLoop) {
-                cell.classList.add('in-loop');
-            }
-        }
-    });
-
-    // Constraints
-    const existingMarkers = document.querySelectorAll('.constraint-marker');
-    if (!shouldRebuild) existingMarkers.forEach(m => m.remove());
-
-    const constraints = state.constraints;
-    const nodeDegrees = state.node_degrees;
-
-    for (const key in constraints) {
-        const coords = key.replace(/[()]/g, '').split(',');
-        const nr = parseInt(coords[0].trim());
-        const nc = parseInt(coords[1].trim());
-
-        const limit = constraints[key];
-        const currentDeg = nodeDegrees[key] || 0;
-
-        const nodeEl = document.createElement('div');
-        nodeEl.classList.add('constraint-marker');
-        nodeEl.title = `Needs ${limit} lines (Current: ${currentDeg})`; // Tooltip
-
-        if (currentDeg === limit) {
-            nodeEl.classList.add('satisfied');
-        } else if (currentDeg > limit) {
-            nodeEl.classList.add('error');
-        }
-
-        nodeEl.textContent = limit;
-        const stride = CELL_SIZE + GRID_GAP;
-        const offset = GRID_GAP / 2;
-        const topPos = (nr * stride) - offset;
-        const leftPos = (nc * stride) - offset;
-
-        nodeEl.style.top = `${topPos}px`;
-        nodeEl.style.left = `${leftPos}px`;
-
-        boardEl.appendChild(nodeEl);
-    }
-
-    // Update Scores
-    const humanScoreEl = document.getElementById('score-human');
-    const cpuScoreEl = document.getElementById('score-cpu');
-
-    if (humanScoreEl && cpuScoreEl) {
-        // Animate count up if needed, or just set text
-        humanScoreEl.textContent = state.scores['HUMAN'];
-        cpuScoreEl.textContent = state.scores['CPU'];
-    } else {
-        // Fallback or Old Code (Should have been replaced)
-        const scoreboard = document.getElementById('scoreboard');
-        if (scoreboard && !humanScoreEl) {
-            // If specific IDs don't exist yet (cache issue?), recreate simplistic
-            scoreboard.innerHTML = `<span style="color:#3b82f6">Human: ${state.scores['HUMAN']}</span> <span style="color:#f43f5e">CPU: ${state.scores['CPU']}</span>`;
-        }
-    }
-
-    // Status Text Update
-    if (state.status === "RUNNING") {
-        if (state.turn === "HUMAN") {
-            statusEl.textContent = "Player Turn - Click to Place Slash";
-            statusEl.style.color = "#38bdf8";
-        } else {
-            statusEl.textContent = "CPU Processing - Greedy Algorithm";
-            statusEl.style.color = "#f472b6";
-        }
-    } else if (state.status === "FILLED_INVALID") {
-        statusEl.textContent = "Game Completed: Board filled with violations. Greedy algorithm reached local optimum.";
-        statusEl.style.color = "#fbbf24";
-    }
-
-    checkGameStatus(state);
-}
 
 // ... (rest of helper functions)
 
