@@ -8,6 +8,7 @@ A graph theory-based puzzle game featuring greedy algorithms, constraint satisfa
 - [How to Play](#how-to-play)
 - [Scoring System](#scoring-system)
 - [Game Modes](#game-modes)
+- [Sorting Mechanism (Custom Quicksort)](#sorting-mechanism-custom-quicksort)
 - [Installation & Setup](#installation--setup)
 
 ---
@@ -165,6 +166,26 @@ Points are awarded based on strategic placement and puzzle-solving skill. Both h
 - Scoring: No points awarded
 - Goal: Demonstrate a valid solution exists
 - Best For: Getting unstuck, learning correct patterns
+
+---
+
+## Sorting Mechanism (Custom Quicksort)
+
+To efficiently select CPU moves, the game implements a custom Quicksort algorithm for sorting candidate moves based on heuristic scores.
+
+- During each CPU turn, multiple valid moves are evaluated by the selected greedy strategy. Each move is assigned a score, and sorting ensures that higher-priority moves are considered first.
+
+### Where It Is Used
+- In the Constraint-Focused strategy, moves near important constraints are ranked.
+- In the Edge-First strategy, cells are sorted based on distance from the center.
+- In the Random-Greedy strategy, moves are sorted before selecting randomly from top candidates.
+
+### Why Quicksort
+- Efficient average-case performance
+- Supports key-based and descending sorting
+- Demonstrates practical use of a divide-and-conquer sorting technique
+
+This sorting mechanism improves AI decision quality and scalability across different board sizes.
 
 ---
 
