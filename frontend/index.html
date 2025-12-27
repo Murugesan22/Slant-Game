@@ -68,12 +68,74 @@
                     <button id="multiplayer-btn" class="btn secondary">Multiplayer</button>
                     <button id="solve-btn" class="btn secondary"
                         style="border-color: #f472b6; color: #f472b6;">Solve</button>
+                    <button id="help-btn" class="btn secondary" style="border-color: #fbbf24; color: #fbbf24;">❓
+                        Help</button>
                 </div>
             </div>
 
-            <div class="instructions">
-                <p>Click once for <strong>\</strong> (Left-Slash), again for <strong>/</strong> (Right-Slash).</p>
-                <p>Numbers on intersections indicate how many lines must touch that point.</p>
+            <!-- Enhanced Instructions Modal -->
+            <div id="instructions-modal" class="instructions-modal hidden">
+                <div class="instructions-modal-content">
+                    <div class="instructions-header">
+                        <h2>📚 Game Instructions</h2>
+                        <button id="close-instructions-btn" class="close-modal-btn">✖</button>
+                    </div>
+                    <div class="instructions-body">
+                        <div class="instruction-section">
+                            <h4>🎯 Game Rules</h4>
+                            <ul>
+                                <li><strong>Fill Every Cell:</strong> Each cell needs exactly one diagonal slash (\ or
+                                    /)</li>
+                                <li><strong>Match Numbers:</strong> Corner numbers indicate how many lines must touch
+                                    that point</li>
+                                <li><strong>No Loops:</strong> Slashes cannot form closed circles or cycles</li>
+                            </ul>
+                        </div>
+
+                        <div class="instruction-section">
+                            <h4>🎮 Controls</h4>
+                            <ul>
+                                <li><strong>Single Click:</strong> Toggle between \ and / slash types</li>
+                                <li><strong>Double Click:</strong> Clear the cell</li>
+                                <li><strong>New Game:</strong> Start a fresh puzzle</li>
+                                <li><strong>Undo:</strong> Revert last move</li>
+                                <li><strong>Multiplayer:</strong> Play vs CPU (choose strategy)</li>
+                                <li><strong>Solve:</strong> Auto-complete the puzzle</li>
+                            </ul>
+                        </div>
+
+                        <div class="instruction-section">
+                            <h4>💯 Scoring System</h4>
+                            <ul>
+                                <li><strong>+1:</strong> Every valid move</li>
+                                <li><strong>+2:</strong> Complete a numbered constraint</li>
+                                <li><strong>+3:</strong> Create perfect cell (all 4 corners satisfied)</li>
+                                <li><strong>+1:</strong> Place near center (strategic bonus)</li>
+                            </ul>
+                            <p class="tip">💡 Best moves can score up to 13 points!</p>
+                        </div>
+
+                        <div class="instruction-section">
+                            <h4>🎨 Visual Feedback</h4>
+                            <ul>
+                                <li><strong>🟢 Green Numbers:</strong> Constraint satisfied ✅</li>
+                                <li><strong>🔴 Red Numbers:</strong> Constraint violated ❌</li>
+
+                                <li><strong>🔴 Red Slashes:</strong> Part of a loop (invalid!)</li>
+                            </ul>
+                        </div>
+
+                        <div class="instruction-section">
+                            <h4>🤖 CPU Strategies</h4>
+                            <ul>
+                                <li><strong>Strategy 1:</strong> Constraint-Focused (methodical)</li>
+                                <li><strong>Strategy 2:</strong> Edge-First (perimeter focus)</li>
+                                <li><strong>Strategy 3:</strong> Random-Greedy (unpredictable)</li>
+                            </ul>
+                            <p class="tip">💡 All strategies use custom Quicksort algorithm!</p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
@@ -83,7 +145,7 @@
         <div class="strategy-content">
             <h2>Select Greedy Strategy</h2>
             <p>Choose which greedy algorithm the CPU should use:</p>
-            
+
             <div class="strategy-options">
                 <div class="strategy-option" data-strategy="1">
                     <div class="strategy-title">
@@ -91,31 +153,34 @@
                         <span>Constraint-Focused</span>
                     </div>
                     <div class="strategy-description">
-                        Prioritizes cells near constraint nodes and focuses on satisfying them first. Works from constrained areas outward.
+                        Prioritizes cells near constraint nodes and focuses on satisfying them first. Works from
+                        constrained areas outward.
                     </div>
                 </div>
-                
+
                 <div class="strategy-option" data-strategy="2">
                     <div class="strategy-title">
                         <span class="strategy-badge">Strategy 2</span>
                         <span>Edge-First</span>
                     </div>
                     <div class="strategy-description">
-                        Starts from edges and corners, working inward toward the center. Emphasizes perimeter completion.
+                        Starts from edges and corners, working inward toward the center. Emphasizes perimeter
+                        completion.
                     </div>
                 </div>
-                
+
                 <div class="strategy-option" data-strategy="3">
                     <div class="strategy-title">
                         <span class="strategy-badge">Strategy 3</span>
                         <span>Random-Greedy</span>
                     </div>
                     <div class="strategy-description">
-                        Adds randomness to move selection for unpredictable gameplay. Chooses from top-scoring valid moves randomly.
+                        Adds randomness to move selection for unpredictable gameplay. Chooses from top-scoring valid
+                        moves randomly.
                     </div>
                 </div>
             </div>
-            
+
             <div class="strategy-actions">
                 <button id="cancel-strategy-btn" class="btn secondary">Cancel</button>
                 <button id="confirm-strategy-btn" class="btn primary">Confirm</button>
