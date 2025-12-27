@@ -1,5 +1,53 @@
 import random
 
+
+def quicksort(arr, key=None, reverse=False):
+    """
+    Custom Quicksort implementation with key function support.
+    
+    Educational implementation demonstrating divide-and-conquer algorithm.
+    Uses Lomuto partition scheme with randomized pivot selection.
+    
+    Args:
+        arr: List to sort (modified in-place)
+        key: Function to extract comparison key from each element
+        reverse: Sort in descending order if True
+    
+    Time Complexity: O(n log n) average case, O(n²) worst case
+    Space Complexity: O(log n) for recursion stack
+    """
+    def _partition(arr, low, high, key_func, reverse):
+        """Lomuto partition scheme with randomized pivot"""
+        # Randomize pivot to avoid worst case on sorted data
+        pivot_idx = random.randint(low, high)
+        arr[pivot_idx], arr[high] = arr[high], arr[pivot_idx]
+        
+        pivot_val = key_func(arr[high]) if key_func else arr[high]
+        i = low - 1
+        
+        for j in range(low, high):
+            curr_val = key_func(arr[j]) if key_func else arr[j]
+            
+            # Comparison based on reverse flag
+            if (curr_val <= pivot_val) if not reverse else (curr_val >= pivot_val):
+                i += 1
+                arr[i], arr[j] = arr[j], arr[i]
+        
+        arr[i + 1], arr[high] = arr[high], arr[i + 1]
+        return i + 1
+    
+    def _quicksort_recursive(arr, low, high, key_func, reverse):
+        """Recursive quicksort helper"""
+        if low < high:
+            pi = _partition(arr, low, high, key_func, reverse)
+            _quicksort_recursive(arr, low, pi - 1, key_func, reverse)
+            _quicksort_recursive(arr, pi + 1, high, key_func, reverse)
+    
+    if len(arr) <= 1:
+        return
+    
+    _quicksort_recursive(arr, 0, len(arr) - 1, key, reverse)
+
 class GreedyAI:
     def __init__(self, game, strategy=1):
         self.game = game
@@ -37,8 +85,8 @@ class GreedyAI:
                             constraints_nearby += 1
                     cells.append(((r, c), constraints_nearby))
                     
-        # Sort desc by constraints count
-        cells.sort(key=lambda x: x[1], reverse=True)
+        # Sort desc by constraints count using custom Quicksort
+        quicksort(cells, key=lambda x: x[1], reverse=True)
         
         for (r, c), _ in cells:
             for move_type in ['L', 'R']:
@@ -111,8 +159,8 @@ class GreedyAI:
                     edge_priority = abs(r - mid) + abs(c - mid)
                     cells.append(((r, c), edge_priority))
         
-        # Sort by edge priority (descending - edges first)
-        cells.sort(key=lambda x: x[1], reverse=True)
+        # Sort by edge priority (descending - edges first) using custom Quicksort
+        quicksort(cells, key=lambda x: x[1], reverse=True)
         
         for (r, c), _ in cells:
             for move_type in ['L', 'R']:
@@ -195,8 +243,8 @@ class GreedyAI:
             noise = random.uniform(-0.3, 0.3)  # Random variation
             noisy_moves.append((r, c, move_type, score + noise))
         
-        # Sort and pick from top candidates
-        noisy_moves.sort(key=lambda x: x[3], reverse=True)
+        # Sort and pick from top candidates using custom Quicksort
+        quicksort(noisy_moves, key=lambda x: x[3], reverse=True)
         
         # Pick from top 30% of moves to add variety
         top_count = max(1, len(noisy_moves) // 3)
