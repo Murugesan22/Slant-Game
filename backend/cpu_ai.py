@@ -284,3 +284,121 @@ class GreedyAI:
                 score += 0.08
         
         return score
+    # ==================== HELPERS FOR SOLVER GUIDANCE ====================
+    def get_best_empty_cell(self):
+        """
+        Returns the (r, c) of the empty cell with highest priority according to strategy.
+        Used by the backtracking solver to pick 'which cell to fill next'.
+        """
+        size = self.game.size
+        candidates = []
+        
+        # 1. Collect all empty cells
+        for r in range(size):
+            for c in range(size):
+                if self.game.grid[r][c] is None:
+                    # Score the CELL itself (not the move)
+                    priority = 0
+                    
+                    # [SMART GREEDY]: Prioritize FORCED MOVES (Unit Propagation)
+                    # If a cell has only 1 valid move, we MUST take it now to avoid conflicts.
+                    valid_opts = 0
+                    if self.game.is_move_valid(r, c, 'L'): valid_opts += 1
+                    if self.game.is_move_valid(r, c, 'R'): valid_opts += 1
+                    
+                    if valid_opts == 1:
+                        priority += 1000000 # Forced move! Immediate priority.
+                    elif valid_opts == 0:
+                        priority = -1000000 # Dead end (cannot fill).
+                    
+                    if self.strategy == 1:
+                        # CELL PRIORITY: Number of adjacent constraints
+                        # (Same logic as _strategy_constraint_focused sort)
+                        nodes = [(r, c), (r+1, c+1), (r+1, c), (r, c+1)]
+                        for n in nodes:
+                            if n in self.game.constraints:
+                                priority += 10 # High weight for constraints
+                        # Tie-breaker: Distance from center (closer is better)
+                        mid = size // 2
+                        dist = abs(r - mid) + abs(c - mid)
+                        priority += (10 - dist) * 0.1 
+                        
+                    elif self.strategy == 2:
+                        # CELL PRIORITY: Edge distance (Farther is better)
+                        mid = size / 2
+                        dist = abs(r - mid) + abs(c - mid)
+                        priority += dist * 10
+                        
+                    elif self.strategy == 3:
+                        # CELL PRIORITY: Random
+                        priority += random.random()
+                        
+                    candidates.append(((r, c), priority))
+        
+        if not candidates:
+            return None
+            
+        # 2. Sort safely
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        # [FORCE FILL UPDATE]: Do NOT return None if dead end.
+        # We want to return the cell so the solver can Force-Fill it.
+        # if candidates[0][1] < 0:
+        #    return None
+
+        return candidates[0][0]
+
+    def get_move_order(self, r, c):
+        """
+        Returns ['L', 'R'] or ['R', 'L'] sorted by heuristic score for this cell.
+        Includes 1-Step Look-ahead to avoid immediate dead ends.
+        """
+        # Score both
+        base_L = 0
+        base_R = 0
+        
+        if self.strategy == 1:
+            base_L = self._evaluate_constraint_focused(r, c, 'L')
+            base_R = self._evaluate_constraint_focused(r, c, 'R')
+        elif self.strategy == 2:
+            base_L = self._evaluate_edge_first(r, c, 'L')
+            base_R = self._evaluate_edge_first(r, c, 'R')
+        elif self.strategy == 3:
+            base_L = self._evaluate_random_greedy(r, c, 'L') + random.uniform(-0.1, 0.1)
+            base_R = self._evaluate_random_greedy(r, c, 'R') + random.uniform(-0.1, 0.1)
+        else:
+            base_L = self._evaluate_constraint_focused(r, c, 'L')
+            base_R = self._evaluate_constraint_focused(r, c, 'R')
+
+        # [BASIC GREEDY]: Removed advanced Look-Ahead.
+        # Decisions are now based purely on standard heuristics (Constraint/Edge).
+        
+        final_L = base_L
+        final_R = base_R
+            
+        if final_L >= final_R:
+            return ['L', 'R']
+        else:
+            return ['R', 'L']
+
+    def _causes_dead_end(self, r, c):
+        """
+        Check if any neighbor of (r, c) becomes unfillable (0 valid moves)
+        """
+        size = self.game.size
+        # Neighbors
+        neighbors = []
+        if r > 0: neighbors.append((r-1, c))
+        if r < size-1: neighbors.append((r+1, c))
+        if c > 0: neighbors.append((r, c-1))
+        if c < size-1: neighbors.append((r, c+1))
+        
+        for nr, nc in neighbors:
+            if self.game.grid[nr][nc] is None:
+                valid = 0
+                if self.game.is_move_valid(nr, nc, 'L'): valid += 1
+                if self.game.is_move_valid(nr, nc, 'R'): valid += 1
+                
+                if valid == 0:
+                    return True # Detected a dead end!
+        return False
