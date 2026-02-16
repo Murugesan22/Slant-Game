@@ -6,7 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Slant - Graph Puzzle</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <!-- Google Fonts removed for offline use; using system font fallback -->
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+    </style>
 </head>
 
 <body>
@@ -68,8 +73,18 @@
                     <button id="multiplayer-btn" class="btn secondary">Multiplayer</button>
                     <button id="solve-btn" class="btn secondary"
                         style="border-color: #f472b6; color: #f472b6;">Solve</button>
+                    <button id="solve-dp-btn" class="btn secondary" style="border-color: #a78bfa; color: #a78bfa;">Solve
+                        (DP)</button>
+                    <button id="solve-dnc-btn" class="btn secondary"
+                        style="border-color: #2dd4bf; color: #2dd4bf;">Solve (D&C)</button>
+                    <button id="solve-cut-btn" class="btn secondary"
+                        style="border-color: #fb923c; color: #fb923c;">Solve (Cut)</button>
+                    <button id="solve-hybrid-btn" class="btn secondary"
+                        style="border-color: #f43f5e; color: #f43f5e;">Solve (Hybrid)</button>
                     <button id="help-btn" class="btn secondary" style="border-color: #fbbf24; color: #fbbf24;">❓
                         Help</button>
+                    <button id="review-btn" class="btn secondary" style="border-color: #10b981; color: #10b981;">📊
+                        Review</button>
                 </div>
             </div>
 
@@ -126,13 +141,14 @@
                         </div>
 
                         <div class="instruction-section">
-                            <h4>🤖 CPU Strategies</h4>
+                            <h4>🤖 CPU Algorithms</h4>
                             <ul>
-                                <li><strong>Strategy 1:</strong> Constraint-Focused (methodical)</li>
-                                <li><strong>Strategy 2:</strong> Edge-First (perimeter focus)</li>
-                                <li><strong>Strategy 3:</strong> Random-Greedy (unpredictable)</li>
+                                <li><strong>Dynamic Programming:</strong> Row-by-row DP with memoization</li>
+                                <li><strong>Divide & Conquer:</strong> Quadrant-based recursive solving</li>
+                                <li><strong>Hybrid (D&C + DP):</strong> D&C partitioning with DP solving</li>
+                                <li><strong>Cut-based Partition:</strong> Minimal cut region solving</li>
                             </ul>
-                            <p class="tip">💡 All strategies use custom Quicksort algorithm!</p>
+                            <p class="tip">💡 All solvers use pure algorithmic approaches - no greedy heuristics!</p>
                         </div>
                     </div>
                 </div>
@@ -140,50 +156,74 @@
         </main>
     </div>
 
-    <!-- Strategy Selection Modal -->
-    <div id="strategy-modal" class="strategy-modal hidden">
+    <!-- Solver Selection Modal -->
+    <div id="solver-modal" class="strategy-modal hidden">
         <div class="strategy-content">
-            <h2>Select Greedy Strategy</h2>
-            <p>Choose which greedy algorithm the CPU should use:</p>
+            <h2>Select Algorithm</h2>
+            <p>Choose which algorithmic solver the CPU should use:</p>
 
             <div class="strategy-options">
-                <div class="strategy-option" data-strategy="1">
+                <div class="strategy-option" data-solver="dp">
                     <div class="strategy-title">
-                        <span class="strategy-badge">Strategy 1</span>
-                        <span>Constraint-Focused</span>
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #a78bfa, #c084fc);">🔷</span>
+                        <span>Dynamic Programming</span>
                     </div>
                     <div class="strategy-description">
-                        Prioritizes cells near constraint nodes and focuses on satisfying them first. Works from
-                        constrained areas outward.
+                        Row-by-row DP with memoization. Efficient for medium-sized grids.
                     </div>
                 </div>
 
-                <div class="strategy-option" data-strategy="2">
+                <div class="strategy-option" data-solver="dnc">
                     <div class="strategy-title">
-                        <span class="strategy-badge">Strategy 2</span>
-                        <span>Edge-First</span>
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #2dd4bf, #5eead4);">🔶</span>
+                        <span>Divide & Conquer</span>
                     </div>
                     <div class="strategy-description">
-                        Starts from edges and corners, working inward toward the center. Emphasizes perimeter
-                        completion.
+                        Quadrant-based recursive solving. Good for large grids with balanced constraints.
                     </div>
                 </div>
 
-                <div class="strategy-option" data-strategy="3">
+                <div class="strategy-option" data-solver="hybrid">
                     <div class="strategy-title">
-                        <span class="strategy-badge">Strategy 3</span>
-                        <span>Random-Greedy</span>
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #f43f5e, #fb7185);">🔸</span>
+                        <span>Hybrid (D&C + DP)</span>
                     </div>
                     <div class="strategy-description">
-                        Adds randomness to move selection for unpredictable gameplay. Chooses from top-scoring valid
-                        moves randomly.
+                        Combines D&C partitioning with DP solving. Best for complex puzzles.
+                    </div>
+                </div>
+
+                <div class="strategy-option" data-solver="cut">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #fb923c, #fdba74);">🔺</span>
+                        <span>Cut-based Partition</span>
+                    </div>
+                    <div class="strategy-description">
+                        Identifies independent regions and solves recursively. Optimal for sparse constraints.
                     </div>
                 </div>
             </div>
 
             <div class="strategy-actions">
-                <button id="cancel-strategy-btn" class="btn secondary">Cancel</button>
-                <button id="confirm-strategy-btn" class="btn primary">Confirm</button>
+                <button id="cancel-solver-btn" class="btn secondary">Cancel</button>
+                <button id="confirm-solver-btn" class="btn primary">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Review Results Modal -->
+    <div id="review-modal" class="strategy-modal hidden">
+        <div class="strategy-content">
+            <h2>Move Review</h2>
+            <div id="review-results">
+                <!-- Results will be populated by JavaScript -->
+            </div>
+            <div class="strategy-actions">
+                <button id="close-review-btn" class="btn primary">Close</button>
             </div>
         </div>
     </div>
