@@ -1,4 +1,4 @@
-const API_URL = "http://localhost:5000/api";
+const API_URL = "http://127.0.0.1:5000/api";
 let currentState = null;
 
 // DOM Elements
@@ -15,7 +15,8 @@ const CELL_SIZE = 60; // Must match CSS
 const GRID_GAP = 2; // Must match CSS
 let currentSize = 5;
 let multiplayerMode = false; // Track multiplayer mode state
-let selectedStrategy = 1; // Track selected greedy strategy (1, 2, or 3)
+let selectedSolver = 'dp'; // Track selected solver: 'dp', 'dnc', 'hybrid', 'cut'
+let cpuTimedOut = false; // Set when CPU exceeds time limit
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
@@ -46,6 +47,18 @@ newGameBtn.addEventListener('click', newGame);
 undoBtn.addEventListener('click', undoLastMove);
 multiplayerBtn.addEventListener('click', toggleMultiplayerMode);
 solveBtn.addEventListener('click', solveGame);
+
+// New DP and D&C solve buttons
+const solveDpBtn = document.getElementById('solve-dp-btn');
+const solveDncBtn = document.getElementById('solve-dnc-btn');
+const solveCutBtn = document.getElementById('solve-cut-btn');
+const solveHybridBtn = document.getElementById('solve-hybrid-btn');
+const reviewBtn = document.getElementById('review-btn');
+if (solveDpBtn) solveDpBtn.addEventListener('click', solveDP);
+if (solveDncBtn) solveDncBtn.addEventListener('click', solveDnC);
+if (solveCutBtn) solveCutBtn.addEventListener('click', solveBoundaryCut);
+if (solveHybridBtn) solveHybridBtn.addEventListener('click', solveHybrid);
+if (reviewBtn) reviewBtn.addEventListener('click', reviewMoves);
 
 // Help button for instructions modal
 const helpBtn = document.getElementById('help-btn');
@@ -126,6 +139,32 @@ function renderBoard(state) {
         boardEl.style.width = `${totalSize}px`;
         boardEl.style.height = `${totalSize}px`; // Force height for absolute positioning of nodes
 
+        // Create coordinate wrapper
+        const coordWrapper = document.createElement('div');
+        coordWrapper.classList.add('board-with-coords');
+
+        // Create row numbers container (left side)
+        const rowNumbers = document.createElement('div');
+        rowNumbers.classList.add('row-numbers');
+        for (let r = size; r >= 1; r--) {
+            const rowLabel = document.createElement('div');
+            rowLabel.classList.add('row-label');
+            rowLabel.textContent = r;
+            rowNumbers.appendChild(rowLabel);
+        }
+
+        // Create the actual game board container
+        const boardContainer = document.createElement('div');
+        boardContainer.classList.add('board-container');
+
+        // Create the grid
+        const gridEl = document.createElement('div');
+        gridEl.classList.add('game-grid');
+        gridEl.style.gridTemplateColumns = `repeat(${size}, ${CELL_SIZE}px)`;
+        gridEl.style.gap = `${GRID_GAP}px`;
+        gridEl.style.width = `${totalSize}px`;
+        gridEl.style.height = `${totalSize}px`;
+
         // Create Cells
         for (let r = 0; r < size; r++) {
             for (let c = 0; c < size; c++) {
@@ -134,9 +173,33 @@ function renderBoard(state) {
                 cell.dataset.r = r;
                 cell.dataset.c = c;
                 cell.addEventListener('click', () => handleCellClick(r, c));
-                boardEl.appendChild(cell);
+                gridEl.appendChild(cell);
             }
         }
+
+        boardContainer.appendChild(gridEl);
+
+        // Create column letters container (below board)
+        const colLetters = document.createElement('div');
+        colLetters.classList.add('col-letters');
+        for (let c = 0; c < size; c++) {
+            const colLabel = document.createElement('div');
+            colLabel.classList.add('col-label');
+            colLabel.textContent = String.fromCharCode(65 + c); // A, B, C, ...
+            colLetters.appendChild(colLabel);
+        }
+
+        // Assemble the coordinate system
+        const rowAndBoard = document.createElement('div');
+        rowAndBoard.classList.add('row-and-board');
+        rowAndBoard.appendChild(rowNumbers);
+        rowAndBoard.appendChild(boardContainer);
+
+        coordWrapper.appendChild(rowAndBoard);
+        coordWrapper.appendChild(colLetters);
+
+        // Replace boardEl content with coordinate wrapper
+        boardEl.appendChild(coordWrapper);
 
         // Render Constraints (Nodes) - Rebuild these too if grid changes
         // But for simplicity, we can clear constraint markers separately or rebuild all?
@@ -176,6 +239,12 @@ function renderBoard(state) {
                 cell.classList.add('in-loop');
             }
         }
+
+        // Color CPU moves yellow in multiplayer mode
+        cell.classList.remove('cpu-move');
+        if (multiplayerMode && state.owners && state.owners[r][c] === 'CPU') {
+            cell.classList.add('cpu-move');
+        }
     });
 
     // Update Constraints
@@ -192,6 +261,9 @@ function renderBoard(state) {
 
     const constraints = state.constraints;
     const nodeDegrees = state.node_degrees;
+
+    // Find the grid element to append markers to
+    const gridEl = document.querySelector('.game-grid') || boardEl;
 
     for (const key in constraints) {
         const coords = key.replace(/[()]/g, '').split(',');
@@ -220,7 +292,7 @@ function renderBoard(state) {
         nodeEl.style.top = `${topPos}px`;
         nodeEl.style.left = `${leftPos}px`;
 
-        boardEl.appendChild(nodeEl);
+        gridEl.appendChild(nodeEl);
     }
 
     // Status Text - SIMPLIFIED
@@ -283,6 +355,15 @@ function checkGameStatus(state) {
         }
     };
 
+    // Get algorithm label based on solver
+    const solverLabels = {
+        'dp': 'Dynamic Programming',
+        'dnc': 'Divide & Conquer',
+        'hybrid': 'Hybrid (D&C + DP)',
+        'cut': 'Cut-based Partition'
+    };
+    const algoLabel = solverLabels[selectedSolver] || 'Algorithmic';
+
     if (state.status === "WIN_HUMAN" || state.status === "WIN_CPU" || state.status === "DRAW" || state.status === "COMPLETED") {
         if (winOverlay.classList.contains('hidden')) {
             setTimeout(() => {
@@ -290,13 +371,13 @@ function checkGameStatus(state) {
 
                 if (state.status === "WIN_HUMAN") {
                     winContent.textContent = "✓ Victory";
-                    winMsg.textContent = `Greedy algorithm completed successfully. Final Score: ${state.scores['HUMAN']} - ${state.scores['CPU']}`;
-                    playSound('cpu'); // Or victory sound
+                    winMsg.textContent = `${algoLabel} algorithm completed successfully. Final Score: ${state.scores['HUMAN']} - ${state.scores['CPU']}`;
+                    playSound('cpu');
                     statusEl.style.color = "#4ade80";
                 } else if (state.status === "WIN_CPU") {
                     winContent.textContent = "AI Victory";
-                    winMsg.textContent = `CPU greedy algorithm outperformed player. Final Score: ${state.scores['HUMAN']} - ${state.scores['CPU']}`;
-                    playSound('error'); // Defeat sound
+                    winMsg.textContent = `CPU ${algoLabel} algorithm outperformed player. Final Score: ${state.scores['HUMAN']} - ${state.scores['CPU']}`;
+                    playSound('error');
                     statusEl.style.color = "#f43f5e";
                 } else if (state.status === "DRAW") {
                     winContent.textContent = "Draw";
@@ -304,7 +385,6 @@ function checkGameStatus(state) {
                     statusEl.style.color = "#fbbf24";
                 }
 
-                // Clean up any unwanted buttons
                 cleanupExtraButtons();
 
             }, 100);
@@ -314,12 +394,10 @@ function checkGameStatus(state) {
         statusEl.textContent = "Game Completed - Invalid Board State";
         statusEl.style.color = "#fbbf24";
 
-        // Also show in Overlay
         winContent.textContent = "Game Over";
-        winMsg.textContent = "Board filled with constraint violations. Greedy algorithm limitations encountered.";
+        winMsg.textContent = `Board filled with constraint violations. ${algoLabel} algorithm could not find a valid solution.`;
         winOverlay.classList.remove('hidden');
 
-        // CRITICAL: Remove any Show Graph button
         cleanupExtraButtons();
 
         playSound('error');
@@ -446,6 +524,26 @@ async function handleCellClick(r, c) {
         return;
     }
 
+    // Block clicks while CPU is thinking in multiplayer mode (unless timed out)
+    // BUT allow correction clicks on cells the human already owns (toggle L↔R)
+    if (multiplayerMode && !cpuTimedOut && (cpuMoveTimer || (currentState.turn === 'CPU'))) {
+        // Allow toggling human-owned cells (corrections)
+        const cellOwner = currentState.owners && currentState.owners[r] && currentState.owners[r][c];
+        const cellValue = currentState.grid && currentState.grid[r] && currentState.grid[r][c];
+        if (cellOwner === 'HUMAN' && cellValue !== null) {
+            // This is a correction — allow it, cancel pending CPU move
+            if (cpuMoveTimer) {
+                clearTimeout(cpuMoveTimer);
+                cpuMoveTimer = null;
+            }
+            const wrapper = document.querySelector('.board-wrapper');
+            if (wrapper) wrapper.classList.remove('cpu-thinking');
+        } else {
+            statusEl.textContent = "Wait - CPU is thinking...";
+            return;
+        }
+    }
+    cpuTimedOut = false; // Reset after human resumes
 
     // Clear any pending CPU move immediately to allow correction
     if (cpuMoveTimer) {
@@ -487,13 +585,29 @@ async function handleCellClick(r, c) {
             currentState = data.state;
             renderBoard(currentState);
 
-            playSound('click');
+            // Check if CPU auto-fixed the board
+            if (data.auto_fixed) {
+                statusEl.textContent = data.message || "CPU auto-corrected its moves!";
+                statusEl.style.color = "#4ade80";
+                playSound('cpu');
+                return;
+            }
 
-            // Removed Cooldown Logic
+            // Check if the user needs to fix their moves
+            if (data.user_fix_needed) {
+                statusEl.textContent = data.message || "Please undo and change some of your moves.";
+                statusEl.style.color = "#fbbf24";
+                playSound('error');
+                return;
+            }
+
+            playSound('click');
 
             // Auto CPU Trigger after small delay (Debounce) - ONLY IN MULTIPLAYER MODE
             if (multiplayerMode && currentState.status === "RUNNING" && currentState.turn === "CPU") {
                 statusEl.textContent = "CPU Turn - Processing...";
+                const wrapper = document.querySelector('.board-wrapper');
+                if (wrapper) wrapper.classList.add('cpu-thinking');
                 cpuMoveTimer = setTimeout(triggerCpuMove, 1500); // 1.5s delay
             }
             // In single-player mode, just keep the status as "Your Turn"
@@ -546,15 +660,15 @@ async function handleCellDblClick(r, c) {
 // ... (rest of helper functions)
 
 function toggleMultiplayerMode() {
-    // Show strategy selection modal
-    const strategyModal = document.getElementById('strategy-modal');
-    strategyModal.classList.remove('hidden');
+    // Show solver selection modal
+    const solverModal = document.getElementById('solver-modal');
+    solverModal.classList.remove('hidden');
 
-    // Set initial selection to current strategy
-    const strategyOptions = document.querySelectorAll('.strategy-option');
-    strategyOptions.forEach(option => {
+    // Set initial selection to current solver
+    const solverOptions = document.querySelectorAll('.strategy-option');
+    solverOptions.forEach(option => {
         option.classList.remove('selected');
-        if (parseInt(option.dataset.strategy) === selectedStrategy) {
+        if (option.dataset.solver === selectedSolver) {
             option.classList.add('selected');
         }
     });
@@ -562,18 +676,18 @@ function toggleMultiplayerMode() {
     playSound('click');
 }
 
-// Strategy Modal Logic
+// Solver Modal Logic
 document.addEventListener('DOMContentLoaded', () => {
-    const strategyModal = document.getElementById('strategy-modal');
-    const strategyOptions = document.querySelectorAll('.strategy-option');
-    const confirmBtn = document.getElementById('confirm-strategy-btn');
-    const cancelBtn = document.getElementById('cancel-strategy-btn');
+    const solverModal = document.getElementById('solver-modal');
+    const solverOptions = document.querySelectorAll('.strategy-option');
+    const confirmBtn = document.getElementById('confirm-solver-btn');
+    const cancelBtn = document.getElementById('cancel-solver-btn');
 
-    // Handle strategy selection
-    strategyOptions.forEach(option => {
+    // Handle solver selection
+    solverOptions.forEach(option => {
         option.addEventListener('click', () => {
             // Remove selected class from all
-            strategyOptions.forEach(opt => opt.classList.remove('selected'));
+            solverOptions.forEach(opt => opt.classList.remove('selected'));
             // Add to clicked one
             option.classList.add('selected');
             playSound('click');
@@ -584,20 +698,20 @@ document.addEventListener('DOMContentLoaded', () => {
     confirmBtn.addEventListener('click', async () => {
         const selectedOption = document.querySelector('.strategy-option.selected');
         if (selectedOption) {
-            selectedStrategy = parseInt(selectedOption.dataset.strategy);
+            selectedSolver = selectedOption.dataset.solver;
 
-            // Send strategy to backend
+            // Send solver to backend
             try {
-                const response = await fetch(`${API_URL}/set_strategy`, {
+                const response = await fetch(`${API_URL}/set_solver`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ strategy: selectedStrategy })
+                    body: JSON.stringify({ solver: selectedSolver })
                 });
                 const data = await response.json();
 
                 if (data.success) {
                     // Close modal
-                    strategyModal.classList.add('hidden');
+                    solverModal.classList.add('hidden');
 
                     // Enable multiplayer mode
                     multiplayerMode = true;
@@ -606,11 +720,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     const cpuScoreCard = document.querySelector('.score-card.cpu');
                     const vsDivider = document.querySelector('.vs-divider');
 
+                    // Get label
+                    const label = data.label || selectedSolver.toUpperCase();
+
                     // Update button style
-                    multiplayerBtn.textContent = `Multiplayer: ON (Strategy ${selectedStrategy})`;
+                    multiplayerBtn.textContent = `Multiplayer: ON (${label})`;
                     multiplayerBtn.style.borderColor = "#4ade80";
                     multiplayerBtn.style.color = "#4ade80";
-                    statusEl.textContent = `Multiplayer Mode: Strategy ${selectedStrategy} Selected`;
+                    statusEl.textContent = `Multiplayer Mode: ${label}`;
                     statusEl.style.color = "#4ade80";
 
                     // Show CPU score card
@@ -625,22 +742,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     playSound('cpu');
                 }
             } catch (e) {
-                console.error('Failed to set strategy:', e);
-                statusEl.textContent = 'Error setting strategy';
+                console.error('Failed to set solver:', e);
+                statusEl.textContent = 'Error setting solver';
             }
         }
     });
 
     // Cancel button
     cancelBtn.addEventListener('click', () => {
-        strategyModal.classList.add('hidden');
+        solverModal.classList.add('hidden');
         playSound('clear');
     });
 
     // Close modal on background click
-    strategyModal.addEventListener('click', (e) => {
-        if (e.target === strategyModal) {
-            strategyModal.classList.add('hidden');
+    solverModal.addEventListener('click', (e) => {
+        if (e.target === solverModal) {
+            solverModal.classList.add('hidden');
             playSound('clear');
         }
     });
@@ -648,22 +765,95 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function triggerCpuMove() {
     cpuMoveTimer = null;
-    statusEl.textContent = "CPU Processing - Evaluating Moves...";
+    const wrapper = document.querySelector('.board-wrapper');
+    const CPU_TIMEOUT = 30; // seconds
+    let secondsLeft = CPU_TIMEOUT;
+
+    // Show initial countdown
+    statusEl.textContent = `CPU Thinking... (${secondsLeft}s)`;
+
+    // Countdown interval — updates every second
+    const countdownId = setInterval(() => {
+        secondsLeft--;
+        if (secondsLeft > 0) {
+            statusEl.textContent = `CPU Thinking... (${secondsLeft}s)`;
+        }
+    }, 1000);
+
+    // AbortController to cancel fetch on timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CPU_TIMEOUT * 1000);
+
     try {
-        const response = await fetch(`${API_URL}/cpu_move`, { method: 'POST' });
+        const response = await fetch(`${API_URL}/cpu_move`, {
+            method: 'POST',
+            signal: controller.signal
+        });
         const data = await response.json();
 
         if (data.success && data.cpu_move) {
             currentState = data.state;
             renderBoard(currentState);
+            // Show message if CPU auto-corrected its moves
+            if (data.auto_fixed) {
+                statusEl.textContent = data.message || "CPU auto-corrected its moves!";
+                statusEl.style.color = "#4ade80";
+            } else if (data.message && data.message.includes("changed")) {
+                statusEl.textContent = data.message;
+                statusEl.style.color = "#fbbf24";
+            } else {
+                statusEl.textContent = "Your Turn - Click to Place Slash";
+                statusEl.style.color = "#22c55e";
+            }
             playSound('cpu');
+        } else if (data.user_fix_needed) {
+            // CPU fixed its own moves but board is still invalid — human moves are the problem
+            if (data.state) {
+                currentState = data.state;
+                renderBoard(currentState);
+            }
+            statusEl.textContent = data.message || "Please change some of your moves to reach a valid solution.";
+            statusEl.style.color = "#fbbf24";
+            playSound('error');
+        } else if (data.no_solution) {
+            // CPU could not fix the board at all
+            if (data.state) {
+                currentState = data.state;
+                renderBoard(currentState);
+            }
+            statusEl.textContent = data.message || "No solution found";
+            statusEl.style.color = "#ef4444";
+            playSound('error');
         } else {
-            // If failed (maybe not turn?), show message
-            if (data.message) statusEl.textContent = data.message;
+            // CPU passed or failed
+            if (data.state) {
+                currentState = data.state;
+                renderBoard(currentState);
+            }
+            statusEl.textContent = data.message || "Your Turn";
+            statusEl.style.color = "#22c55e";
         }
     } catch (e) {
-        console.error(e);
-        statusEl.textContent = "CPU Processing Error";
+        if (e.name === 'AbortError') {
+            // Timeout — force turn back to human
+            cpuTimedOut = true;
+            statusEl.textContent = "CPU timed out! Your Turn.";
+            statusEl.style.color = "#f59e0b";
+            // Fetch state to resync (turn may still be CPU on backend)
+            try {
+                const res = await fetch(`${API_URL}/state`);
+                const freshState = await res.json();
+                currentState = freshState;
+                renderBoard(currentState);
+            } catch (_) { /* ignore */ }
+        } else {
+            console.error(e);
+            statusEl.textContent = "CPU Processing Error";
+        }
+    } finally {
+        clearInterval(countdownId);
+        clearTimeout(timeoutId);
+        if (wrapper) wrapper.classList.remove('cpu-thinking');
     }
 }
 
@@ -696,7 +886,7 @@ async function solveGame() {
             currentState = data.state;
             renderBoard(currentState);
             statusEl.textContent = data.message || "Puzzle Solved Successfully";
-            playSound('cpu'); // Reuse CPU sound for now (nice sweep)
+            playSound('cpu');
         } else {
             statusEl.textContent = data.message || "No Solution Found";
             playSound('error');
@@ -707,7 +897,252 @@ async function solveGame() {
     }
 }
 
+async function solveDP() {
+    statusEl.textContent = "Solving with Dynamic Programming...";
+    try {
+        const response = await fetch(`${API_URL}/solve_dp`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            currentState = data.state;
+            renderBoard(currentState);
+            statusEl.textContent = data.message || "Solved with DP!";
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "DP Solver: No Solution Found";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = "DP Solver Error";
+    }
+}
+
+async function solveDnC() {
+    statusEl.textContent = "Solving with Divide & Conquer...";
+    try {
+        const response = await fetch(`${API_URL}/solve_dnc`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            currentState = data.state;
+            renderBoard(currentState);
+            statusEl.textContent = data.message || "Solved with D&C!";
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "D&C Solver: No Solution Found";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = "D&C Solver Error";
+    }
+}
+
+async function solveBoundaryCut() {
+    statusEl.textContent = "Solving with Minimum-Boundary Cut...";
+    try {
+        const response = await fetch(`${API_URL}/solve_boundary_cut`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            currentState = data.state;
+            renderBoard(currentState);
+            statusEl.textContent = data.message || "Solved with Boundary Cut!";
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "Boundary Cut Solver: No Solution Found";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = "Boundary Cut Solver Error";
+    }
+}
+
+async function solveHybrid() {
+    statusEl.textContent = "Solving with Hybrid DP + D&C...";
+    try {
+        const response = await fetch(`${API_URL}/solve_hybrid`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            currentState = data.state;
+            renderBoard(currentState);
+            statusEl.textContent = data.message || "Solved with Hybrid DP + D&C!";
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "Hybrid Solver: No Solution Found";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = "Hybrid Solver Error";
+    }
+}
+
 function getReason(data) {
     // maybe backend sends specific error?
     return "";
 }
+
+// ==============================================================================
+// REVIEW FEATURE
+// ==============================================================================
+
+async function reviewMoves() {
+    try {
+        statusEl.textContent = "Analyzing moves...";
+
+        const response = await fetch(`${API_URL}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            displayReviewResults(data);
+            highlightInvalidCells(data.move_reviews || []);
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "Review failed";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error('Review error:', e);
+        statusEl.textContent = "Review Error";
+        playSound('error');
+    }
+}
+
+function displayReviewResults(data) {
+    const reviewModal = document.getElementById('review-modal');
+    const reviewResults = document.getElementById('review-results');
+
+    if (!data.move_reviews || data.move_reviews.length === 0) {
+        reviewResults.innerHTML = `
+            <div class="success-message">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">📝</div>
+                No moves to review yet!<br>
+                <span style="font-size: 0.9rem; opacity: 0.7;">Make some moves to see analysis.</span>
+            </div>
+        `;
+    } else {
+        // Calculate accuracy
+        const total = data.total_moves;
+        const incorrect = data.incorrect_count;
+        const correct = total - incorrect;
+        const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
+        
+        let headerColor = incorrect === 0 ? 'var(--constraint-satisfied)' : 'var(--constraint-unsatisfied)';
+        let headerText = incorrect === 0 ? 'Perfect Game!' : `${incorrect} Mistake${incorrect === 1 ? '' : 's'}`;
+        
+        let html = `
+            <div class="review-header" style="text-align: center; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem;">
+                <div style="font-size: 2.5rem; font-weight: 700; color: ${headerColor}; margin-bottom: 0.2rem;">
+                    ${headerText}
+                </div>
+                <div style="font-size: 1rem; color: var(--text-muted);">
+                    ${total} Total Moves • ${accuracy}% Accuracy
+                </div>
+            </div>
+            
+            <div class="review-list-container">
+                <ul class="review-list">
+        `;
+
+        data.move_reviews.forEach((move, index) => {
+            const isCorrect = move.correct;
+            const statusClass = isCorrect ? 'correct' : 'incorrect';
+            const statusIcon = isCorrect ? '✓' : '✗';
+            
+            html += `
+                <li class="review-item ${statusClass}">
+                    <span class="move-num">#${move.move_number}</span>
+                    <span class="move-coords">${move.cell}</span>
+                    <span class="move-player">${move.player === 'HUMAN' ? 'YOU' : 'CPU'}</span>
+                    <span class="move-status">${statusIcon}</span>
+                </li>
+            `;
+        });
+
+        html += `
+                </ul>
+            </div>
+        `;
+        reviewResults.innerHTML = html;
+    }
+
+    reviewModal.classList.remove('hidden');
+    // Update simple status text as fallback/supplement
+    statusEl.textContent = data.incorrect_count === 0 ? "Review: Perfect!" : `Review: ${data.incorrect_count} mistakes found`;
+}
+
+function highlightInvalidCells(moveReviews) {
+    // First, clear any existing highlights
+    document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
+        cell.classList.remove('cell-correct', 'cell-incorrect');
+    });
+
+    // Highlight cells based on correctness
+    if (moveReviews && moveReviews.length > 0) {
+        moveReviews.forEach(move => {
+            const cell = findCellByChessCoordinate(move.cell);
+            if (cell) {
+                if (move.correct) {
+                    cell.classList.add('cell-correct');
+                } else {
+                    cell.classList.add('cell-incorrect');
+                }
+            }
+        });
+    }
+}
+
+function findCellByChessCoordinate(chessCoord) {
+    // Parse chess coordinate (e.g., "A5" -> col=0, row=0 for 5x5 board)
+    // Chess style: A-E columns (left to right), 1-5 rows (bottom to top)
+    const col = chessCoord.charCodeAt(0) - 'A'.charCodeAt(0);
+    const rowNumber = parseInt(chessCoord.substring(1));
+
+    // Convert chess row (bottom-to-top) to grid row (top-to-bottom)
+    const row = currentState.size - rowNumber;
+
+    // Find cell in DOM
+    const cells = document.querySelectorAll('.cell');
+    const index = row * currentState.size + col;
+
+    return cells[index] || null;
+}
+
+// Review modal close handler
+document.addEventListener('DOMContentLoaded', () => {
+    const reviewModal = document.getElementById('review-modal');
+    const closeReviewBtn = document.getElementById('close-review-btn');
+
+    if (closeReviewBtn) {
+        closeReviewBtn.addEventListener('click', () => {
+            reviewModal.classList.add('hidden');
+            // Clear highlights when closing
+            document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
+                cell.classList.remove('cell-correct', 'cell-incorrect');
+            });
+            playSound('clear');
+        });
+    }
+
+    // Close on background click
+    if (reviewModal) {
+        reviewModal.addEventListener('click', (e) => {
+            if (e.target === reviewModal) {
+                reviewModal.classList.add('hidden');
+                // Clear highlights when closing
+                document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
+                    cell.classList.remove('cell-correct', 'cell-incorrect');
+                });
+                playSound('clear');
+            }
+        });
+    }
+});
