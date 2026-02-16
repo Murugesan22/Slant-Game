@@ -604,3 +604,545 @@ def evaluate_move_dnc(game, r, c, move_type):
             score += 0.1
     
     return score
+
+
+
+
+# ==============================================================================
+# MINIMUM-BOUNDARY CUT SOLVER
+# ==============================================================================
+
+def solve_with_boundary_cut(game):
+    """
+    Solve the Slant game using Minimum-Boundary Cut D&C.
+    
+    Strategy:
+    - Scan all possible horizontal/vertical cut lines through the grid
+    - Score each cut line by its "freedom" (how many unconstrained possibilities exist)
+    - Cut along the line with the LOWEST freedom score (most determined)
+    - Solve the cut line cells first, then solve the two independent halves
+    
+    This avoids the "Border Problem" entirely when a perfect cut exists,
+    because cut lines with 0 freedom are fully determined walls.
+    
+    Args:
+        game: SlantGame instance (modified in-place if solution found)
+    
+    Returns:
+        bool: True if solved, False if no solution exists
+    """
+    size = game.size
+    
+    # Clear the grid first
+    for r in range(size):
+        for c in range(size):
+            if game.grid[r][c] is not None:
+                game.remove_move(r, c)
+    
+    game.history = []
+    game.scores = {'HUMAN': 0, 'CPU': 0}
+    game.owners = [[None for _ in range(size)] for _ in range(size)]
+    
+    # Build list of all cells to solve
+    all_cells = [(r, c) for r in range(size) for c in range(size)]
+    
+    # Solve using boundary cut decomposition
+    result = _boundary_cut_solve(game, all_cells, 0)
+    
+    if result:
+        game.detect_cycle_dfs()
+        game.check_completion()
+    
+    return result
+
+
+def _calc_line_freedom(game, nodes):
+    """
+    Calculate the "freedom score" for a line of nodes.
+    
+    Nodes with constraint 0 or 4 have 0 freedom (fully determined).
+    Nodes at grid corners have limited freedom.
+    Unconstrained nodes have maximum freedom.
+    
+    Lower score = better cut (more determined, less ambiguity).
+    """
+    score = 0
+    for node in nodes:
+        constraint = game.constraints.get(node, -1)
+        current_deg = game.node_degrees.get(node, 0)
+        
+        if constraint == 0:
+            # Node must have 0 connections — fully blocked
+            score += 0
+        elif constraint == 4:
+            # Node must have 4 connections — fully forced
+            score += 0
+        elif constraint >= 0:
+            # Partially constrained — some freedom remains
+            remaining = constraint - current_deg
+            score += max(0, remaining)
+        else:
+            # Unconstrained node — maximum freedom
+            # Calculate how many more connections are possible (max 4)
+            score += max(0, 4 - current_deg)
+    
+    return score
+
+
+def _find_best_cut(game, cells):
+    """
+    Find the optimal cut line for the given set of cells.
+    
+    Evaluates all possible horizontal and vertical cuts through the region
+    and returns the one with the lowest freedom score.
+    
+    Returns:
+        (orientation, position, score) or None if no useful cut exists.
+        orientation: 'H' for horizontal, 'V' for vertical
+        position: the row/column index to cut at
+    """
+    if not cells:
+        return None
+    
+    size = game.size
+    rows = [r for r, c in cells]
+    cols = [c for r, c in cells]
+    min_r, max_r = min(rows), max(rows)
+    min_c, max_c = min(cols), max(cols)
+    
+    best_cut = None
+    best_score = float('inf')
+    
+    # Evaluate horizontal cuts (rows of nodes between cell rows)
+    # A horizontal cut at row_idx means the node row at row_idx+1
+    for cut_r in range(min_r, max_r + 1):
+        # The node row between cell rows cut_r and cut_r+1
+        node_row = cut_r + 1
+        if node_row <= 0 or node_row >= size:
+            continue
+        
+        # Nodes along this horizontal line within our column range
+        nodes = [(node_row, c) for c in range(min_c, max_c + 2)]
+        nodes = [n for n in nodes if 0 <= n[0] <= size and 0 <= n[1] <= size]
+        
+        if not nodes:
+            continue
+        
+        freedom = _calc_line_freedom(game, nodes)
+        if freedom < best_score:
+            best_score = freedom
+            best_cut = ('H', cut_r, freedom)
+    
+    # Evaluate vertical cuts (columns of nodes between cell columns)
+    for cut_c in range(min_c, max_c + 1):
+        node_col = cut_c + 1
+        if node_col <= 0 or node_col >= size:
+            continue
+        
+        nodes = [(r, node_col) for r in range(min_r, max_r + 2)]
+        nodes = [n for n in nodes if 0 <= n[0] <= size and 0 <= n[1] <= size]
+        
+        if not nodes:
+            continue
+        
+        freedom = _calc_line_freedom(game, nodes)
+        if freedom < best_score:
+            best_score = freedom
+            best_cut = ('V', cut_c, freedom)
+    
+    return best_cut
+
+
+def _boundary_cut_solve(game, cells, depth):
+    """
+    Recursive boundary-cut D&C solver.
+    
+    1. Find the best cut line through the region
+    2. Solve cells touching the cut line first (small set)
+    3. Split remaining cells into two independent halves
+    4. Recursively solve each half
+    
+    Falls back to backtracking for small regions or when no good cut exists.
+    """
+    if not cells:
+        return True
+    
+    # BASE CASE: Small region — direct backtracking
+    if len(cells) <= 4:
+        return _backtrack_cells(game, cells, 0)
+    
+    # Prevent excessive recursion depth
+    if depth > 20:
+        return _backtrack_cells(game, cells, 0)
+    
+    # DIVIDE: Find optimal cut
+    cut = _find_best_cut(game, cells)
+    
+    # If no useful cut found, fall back to standard D&C
+    if cut is None:
+        return _backtrack_cells(game, cells, 0)
+    
+    orientation, position, freedom = cut
+    
+    # If the cut line has very high freedom (> threshold), backtrack instead
+    # High freedom means the cut won't help much
+    if freedom > len(cells) * 2:
+        return _dnc_solve(game, cells)
+    
+    # SPLIT cells into: cut_adjacent (touching the cut) and two halves
+    half_a = []
+    half_b = []
+    cut_adjacent = []
+    
+    if orientation == 'H':
+        # Horizontal cut at row `position` — node row is position+1
+        for r, c in cells:
+            if r == position or r == position + 1:
+                # Cell touches the cut line
+                cut_adjacent.append((r, c))
+            elif r < position:
+                half_a.append((r, c))
+            else:
+                half_b.append((r, c))
+    else:
+        # Vertical cut at column `position` — node column is position+1
+        for r, c in cells:
+            if c == position or c == position + 1:
+                cut_adjacent.append((r, c))
+            elif c < position:
+                half_a.append((r, c))
+            else:
+                half_b.append((r, c))
+    
+    # If splitting didn't produce two real halves, just backtrack
+    if not half_a or not half_b:
+        return _dnc_solve(game, cells)
+    
+    # CONQUER: Solve cut-adjacent cells first (bridges between halves)
+    # Then solve each half independently
+    return _solve_cut_then_halves(game, cut_adjacent, half_a, half_b, 0, depth)
+
+
+def _solve_cut_then_halves(game, cut_cells, half_a, half_b, cut_idx, depth):
+    """
+    First backtrack through cut-adjacent cells, then solve each half independently.
+    
+    This ensures the "bridge" between halves is locked before solving either side,
+    eliminating the border problem for the independent halves.
+    """
+    if cut_idx >= len(cut_cells):
+        # All cut cells filled — now solve halves independently
+        if not _boundary_cut_solve(game, half_a, depth + 1):
+            return False
+        if not _boundary_cut_solve(game, half_b, depth + 1):
+            # Undo half_a and fail
+            for r, c in half_a:
+                if game.grid[r][c] is not None:
+                    game.remove_move(r, c)
+            return False
+        return True
+    
+    r, c = cut_cells[cut_idx]
+    
+    # Skip already-filled cells
+    if game.grid[r][c] is not None:
+        return _solve_cut_then_halves(game, cut_cells, half_a, half_b, cut_idx + 1, depth)
+    
+    for move_type in ['L', 'R']:
+        if game.is_move_valid(r, c, move_type):
+            game.apply_move(r, c, move_type, check_validity=False, player='HUMAN')
+            
+            if _solve_cut_then_halves(game, cut_cells, half_a, half_b, cut_idx + 1, depth):
+                return True
+            
+            game.undo()
+    
+    return False
+
+
+# ==============================================================================
+# HYBRID DP + D&C SOLVER
+# ==============================================================================
+
+def solve_with_hybrid(game):
+    """
+    Solve the Slant game using a Hybrid DP + D&C approach.
+    
+    Strategy:
+    - DIVIDE: Split the grid into two halves (top/bottom or left/right)
+    - CONQUER: For each half, use DP row-by-row to compute the set of
+      valid boundary states (the "menu" of possible outputs)
+    - COMBINE: Find the intersection of compatible boundary states
+      between the two halves and pick a matching state
+    
+    This transforms the border problem from trial-and-error backtracking
+    into a set intersection problem.
+    
+    Falls back to DP-enhanced backtracking if the hybrid approach fails.
+    
+    Args:
+        game: SlantGame instance (modified in-place if solution found)
+    
+    Returns:
+        bool: True if solved, False if no solution exists
+    """
+    size = game.size
+    
+    # Clear the grid first
+    for r in range(size):
+        for c in range(size):
+            if game.grid[r][c] is not None:
+                game.remove_move(r, c)
+    
+    game.history = []
+    game.scores = {'HUMAN': 0, 'CPU': 0}
+    game.owners = [[None for _ in range(size)] for _ in range(size)]
+    
+    # DIVIDE: Split into top half and bottom half
+    mid_row = size // 2
+    
+    # CONQUER: Use DP to solve top half and collect valid boundary states
+    top_states = _collect_boundary_states_dp(game, 0, mid_row)
+    
+    if not top_states:
+        # No valid solutions for top half — fall back to standard D&C
+        return _dnc_solve(game, [(r, c) for r in range(size) for c in range(size)])
+    
+    # COMBINE: Try each top-half boundary state and see if bottom half works
+    for boundary_state, top_assignments in top_states.items():
+        # Apply top half assignments
+        _apply_assignments(game, top_assignments, 0, mid_row)
+        
+        # Try to solve the bottom half with this boundary committed
+        bottom_cells = [(r, c) for r in range(mid_row, size) for c in range(size)]
+        
+        if _backtrack_cells(game, bottom_cells, 0):
+            # Verify the full solution
+            if _verify_full_solution(game):
+                game.detect_cycle_dfs()
+                game.check_completion()
+                return True
+        
+        # Undo bottom half
+        for r in range(mid_row, size):
+            for c in range(size):
+                if game.grid[r][c] is not None:
+                    game.remove_move(r, c)
+        
+        # Undo top half
+        for r in range(mid_row):
+            for c in range(size):
+                if game.grid[r][c] is not None:
+                    game.remove_move(r, c)
+    
+    # Fallback: Use standard D&C if hybrid approach exhausted all options
+    return _dnc_solve(game, [(r, c) for r in range(size) for c in range(size)])
+
+
+def _get_boundary_state_at_row(game, row_idx):
+    """
+    Capture the boundary state at a given row of nodes.
+    
+    The boundary state is a tuple of (degree, constraint) pairs for each
+    node along the specified row. This serves as the memoization key.
+    """
+    size = game.size
+    state = []
+    for c in range(size + 1):
+        node = (row_idx, c)
+        deg = game.node_degrees.get(node, 0)
+        constraint = game.constraints.get(node, -1)
+        state.append((deg, constraint))
+    return tuple(state)
+
+
+def _collect_boundary_states_dp(game, start_row, end_row):
+    """
+    Use DP to enumerate valid assignments for rows [start_row, end_row)
+    and collect the resulting boundary states at end_row.
+    
+    Returns:
+        dict: {boundary_state: assignment_list} mapping boundary states
+              to the row assignments that produce them.
+              Limited to MAX_STATES to prevent memory explosion.
+    """
+    import itertools
+    
+    size = game.size
+    num_rows = end_row - start_row
+    
+    if num_rows <= 0:
+        return {}
+    
+    MAX_STATES = 50  # Limit to prevent memory explosion on large grids
+    boundary_states = {}
+    
+    # Generate all possible row assignments (each cell is L or R)
+    # For efficiency, we process row by row with pruning
+    
+    def dp_collect(row_idx, assignments_so_far):
+        """Recursively process rows, pruning invalid assignments."""
+        if len(boundary_states) >= MAX_STATES:
+            return  # Hit limit
+        
+        if row_idx >= end_row:
+            # All rows assigned — capture the boundary state
+            boundary = _get_boundary_state_at_row(game, end_row)
+            if boundary not in boundary_states:
+                boundary_states[boundary] = list(assignments_so_far)
+            return
+        
+        # Try all 2^size assignments for this row
+        # For small sizes this is feasible; for large sizes we limit exploration
+        max_assignments = min(2 ** size, 128)  # Cap at 128 to prevent explosion
+        
+        for bits in range(max_assignments):
+            if len(boundary_states) >= MAX_STATES:
+                return
+            
+            assignment = []
+            valid = True
+            
+            # Build assignment from bits
+            for c in range(size):
+                move_type = 'L' if (bits >> c) & 1 == 0 else 'R'
+                assignment.append((row_idx, c, move_type))
+            
+            # Apply the assignment
+            applied = []
+            for r, c, mt in assignment:
+                if game.grid[r][c] is not None:
+                    # Cell already filled (shouldn't happen in clean solve)
+                    applied.append(False)
+                    continue
+                if game.is_move_valid(r, c, mt):
+                    game.apply_move(r, c, mt, check_validity=False, player='HUMAN')
+                    applied.append(True)
+                else:
+                    valid = False
+                    break
+            
+            if valid and len(applied) == size and all(
+                game.grid[row_idx][c] is not None for c in range(size)
+            ):
+                # Check row constraints (nodes at row_idx are now fully determined
+                # if row_idx > start_row)
+                row_ok = True
+                if row_idx > start_row:
+                    for c in range(size + 1):
+                        node = (row_idx, c)
+                        constraint = game.constraints.get(node, -1)
+                        if constraint >= 0:
+                            deg = game.node_degrees.get(node, 0)
+                            if deg > constraint:
+                                row_ok = False
+                                break
+                
+                if row_ok:
+                    dp_collect(row_idx + 1, assignments_so_far + assignment)
+            
+            # Undo the assignment
+            for i in range(len(applied) - 1, -1, -1):
+                if applied[i]:
+                    game.undo()
+    
+    dp_collect(start_row, [])
+    
+    return boundary_states
+
+
+def _apply_assignments(game, assignments, start_row, end_row):
+    """
+    Apply a list of (row, col, move_type) assignments to the game.
+    """
+    for r, c, mt in assignments:
+        if start_row <= r < end_row and game.grid[r][c] is None:
+            if game.is_move_valid(r, c, mt):
+                game.apply_move(r, c, mt, check_validity=False, player='HUMAN')
+
+
+# ==============================================================================
+# SOLUTION EXTRACTION UTILITIES
+# ==============================================================================
+
+def extract_solution_grid(game):
+    """
+    Extract the solution grid from a solved game.
+    
+    Args:
+        game: Solved SlantGame instance
+    
+    Returns:
+        list: 2D grid of solution moves ('L' or 'R')
+    """
+    return [row[:] for row in game.grid]
+
+
+def solve_and_extract_dnc(game):
+    """
+    Solve the game using D&C approach and extract solution grid.
+    
+    Args:
+        game: SlantGame instance
+    
+    Returns:
+        tuple: (success: bool, solution_grid: list or None)
+    """
+    import copy
+    
+    # Create a copy to avoid modifying original
+    game_copy = copy.deepcopy(game)
+    
+    success = solve_with_dnc(game_copy)
+    
+    if success:
+        return True, extract_solution_grid(game_copy)
+    else:
+        return False, None
+
+
+def solve_and_extract_hybrid(game):
+    """
+    Solve the game using Hybrid DP+D&C approach and extract solution grid.
+    
+    Args:
+        game: SlantGame instance
+    
+    Returns:
+        tuple: (success: bool, solution_grid: list or None)
+    """
+    import copy
+    
+    # Create a copy to avoid modifying original
+    game_copy = copy.deepcopy(game)
+    
+    success = solve_with_hybrid(game_copy)
+    
+    if success:
+        return True, extract_solution_grid(game_copy)
+    else:
+        return False, None
+
+
+def solve_and_extract_cut(game):
+    """
+    Solve the game using Boundary Cut approach and extract solution grid.
+    
+    Args:
+        game: SlantGame instance
+    
+    Returns:
+        tuple: (success: bool, solution_grid: list or None)
+    """
+    import copy
+    
+    # Create a copy to avoid modifying original
+    game_copy = copy.deepcopy(game)
+    
+    success = solve_with_boundary_cut(game_copy)
+    
+    if success:
+        return True, extract_solution_grid(game_copy)
+    else:
+        return False, None
+
