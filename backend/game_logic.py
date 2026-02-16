@@ -692,3 +692,243 @@ class SlantGame:
         # Toggle Turn
         self.turn = 'CPU' if self.turn == 'HUMAN' else 'HUMAN'
         return True
+def remove_move(self, r, c, record_history=False):
+        val = self.grid[r][c]
+        if val is None: return
+        
+        if val == 'L':
+             n1, n2 = (r, c), (r+1, c+1)
+             u, v = (r, c), (r+1, c+1)
+             self._remove_edge(u, v)
+        elif val == 'R':
+             n1, n2 = (r+1, c), (r, c+1)
+             u, v = (r+1, c), (r, c+1)
+             self._remove_edge(u, v)
+        else:
+             return 
+            
+        self.node_degrees[n1] -= 1
+        self.node_degrees[n2] -= 1
+        self.grid[r][c] = None
+        
+        if record_history:
+             self.history.append((r, c, val, None))
+
+    def undo(self):
+        if not self.history: return False
+        
+        # Pop extended history
+        # (r, c, old_val, new_val, points, player)
+        # Note: Previous history format was (r,c,old,new). 
+        # We need to handle migration or just assume new format for new games.
+        # Ideally, we just check len.
+        
+        last = self.history.pop()
+        if len(last) == 6:
+            r, c, old_val, new_val, points, player = last
+        else:
+            # Fallback for old history (if any exists in memory, strict restart needed usually)
+            r, c, old_val, new_val = last
+            points = 0
+            player = None
+
+        # Revert change: Remove New, Add Old
+        if new_val is not None:
+            if new_val == 'L': n1, n2 = (r, c), (r+1, c+1)
+            else: n1, n2 = (r+1, c), (r, c+1)
+            self.node_degrees[n1] -= 1
+            self.node_degrees[n2] -= 1
+            
+            # Revert Points
+            if player:
+                self.scores[player] -= points
+            
+            self.owners[r][c] = None
+            
+        self.grid[r][c] = old_val
+        
+        # Update Graph: Remove edge added by 'new_val' that we are undoing
+        # Wait, undo logic restores `old_val`.
+        # So we must remove `new_val` edge and add `old_val` edge.
+        
+        # new_val was 'L' or 'R' or None?
+        # The history entry tells us what happened.
+        # But here we rely on the implementation assuming this block runs AFTER `undo` restoration logic?
+        # NO, this block IS inside `undo`.
+        # `move` struct has `(r, c, old_val, new_val, ...)`
+        
+        # We need to reverse the graph change invoked by `new_val`
+        if new_val == 'L':
+             u, v = (r, c), (r+1, c+1)
+             self._remove_edge(u, v)
+        elif new_val == 'R':
+             u, v = (r+1, c), (r, c+1)
+             self._remove_edge(u, v)
+
+        if old_val is not None:
+            # We restored old_val to grid, so add its edge back
+            if old_val == 'L':
+                u, v = (r, c), (r+1, c+1)
+                self._add_edge(u, v)
+            elif old_val == 'R':
+                u, v = (r+1, c), (r, c+1)
+                self._add_edge(u, v)
+
+            if old_val == 'L': n1, n2 = (r, c), (r+1, c+1)
+            else: n1, n2 = (r+1, c), (r, c+1)
+            self.node_degrees[n1] += 1
+            self.node_degrees[n2] += 1
+        
+        self.check_completion()
+        
+        # Toggle Turn back if it was a real move and player was tracked
+        if new_val is not None and player:
+             # If we undid a CPU move, turn goes back to CPU.
+             # If we undid Human move, turn goes back to Human.
+             # Since we alternate strict, this simply toggles back?
+             # Yes.
+             self.turn = player
+             
+        return True
+
+    def _add_edge(self, u, v):
+        self.graph[u].append(v)
+        self.graph[v].append(u)
+
+    def _remove_edge(self, u, v):
+        if v in self.graph[u]: self.graph[u].remove(v)
+        if u in self.graph[v]: self.graph[v].remove(u)
+
+    def get_graph_representation(self):
+        """
+        [REVIEW 1 REQUIREMENT]: Graph Representation from Grid
+        Returns the persistent Adjacency List.
+        """
+        return self.graph
+
+    def detect_cycle_dfs(self):
+        """
+        [REVIEW 1 REQUIREMENT]: Graph Algorithm (DFS)
+        Detects cycles using Depth First Search on the Adjacency List representation.
+        Returns True if a cycle exists, and populates self.loop_cells with ALL cells in ANY cycle.
+        """
+        graph = self.get_graph_representation()
+        visited = set()
+        rec_stack = set()
+        cycle_found = False
+        self.loop_cells = []
+        
+        def dfs(node, parent, path):
+            nonlocal cycle_found
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+            
+            for neighbor in graph[node]:
+                if neighbor == parent:
+                    continue
+                    
+                if neighbor in rec_stack:
+                    # Found a cycle! Extract the cycle path
+                    cycle_found = True
+                    cycle_start_idx = path.index(neighbor)
+                    cycle_path = path[cycle_start_idx:]
+                    
+                    # Convert cycle edges to grid cells
+                    for i in range(len(cycle_path)):
+                        u = cycle_path[i]
+                        v = cycle_path[(i + 1) % len(cycle_path)]
+                        self._add_edge_to_loop_cells(u, v)
+                    
+                    return True
+                    
+                if neighbor not in visited:
+                    if dfs(neighbor, node, path):
+                        return True
+            
+            path.pop()
+            rec_stack.remove(node)
+            return False
+        
+        for node in graph:
+            if node not in visited:
+                if dfs(node, None, []):
+                    break
+        
+        return cycle_found
+    
+    def _add_edge_to_loop_cells(self, u, v):
+        """
+        Convert an edge (u, v) to its corresponding grid cell and add to loop_cells.
+        """
+        r1, c1 = u
+        r2, c2 = v
+        
+        # Determine which cell this edge belongs to
+        min_r, min_c = min(r1, r2), min(c1, c2)
+        
+        if 0 <= min_r < self.size and 0 <= min_c < self.size:
+            if (min_r, min_c) not in self.loop_cells:
+                self.loop_cells.append((min_r, min_c))
+
+    def to_dict(self):
+        """
+        Return state as JSON-serializable dict
+        """
+        grid_copy = [row[:] for row in self.grid]
+        
+        # Convert tuple keys to string "r,c" for JSON compatibility
+        constraints_str = {f"{k[0]},{k[1]}": v for k, v in self.constraints.items()}
+        node_degrees_str = {f"{k[0]},{k[1]}": v for k, v in self.node_degrees.items()}
+        
+        # Include Graph Rep for Analysis/Debug
+        graph_rep = self.get_graph_representation()
+        # Convert tuple keys/values to strings for JSON
+        graph_str = {}
+        for k, v in graph_rep.items():
+            k_str = f"{k[0]},{k[1]}"
+            v_str = [f"{n[0]},{n[1]}" for n in v]
+            graph_str[k_str] = v_str
+        
+        return {
+            'size': self.size,
+            'grid': grid_copy,
+            'constraints': constraints_str,
+            'node_degrees': node_degrees_str,
+            'status': self.status,
+            'turn': self.turn,
+            'scores': self.scores,
+            'owners': self.owners,
+            'loop_cells': getattr(self, 'loop_cells', []), # [REVIEW 1]: Expose Loop for Visualization
+            'graph': graph_str, # [REVIEW 1]: Exposing API to graph
+            'move_history': getattr(self, 'move_history', [])  # For review feature
+        }
+    
+    def get_move_reviews(self):
+        """
+        Compare ALL moves in move_history against solution_grid.
+        Returns list of all moves with correctness status.
+        
+        Returns:
+            list: List of dicts with move_number, cell, player, and correct (bool) for each move
+        """
+        if not self.solution_grid:
+            return []  # No solution to compare against
+        
+        move_reviews = []
+        for index, move in enumerate(self.move_history):
+            r = move["row"]
+            c = move["col"]
+            val = move["value"]
+            
+            # Compare against solution
+            is_correct = (self.solution_grid[r][c] == val)
+            
+            move_reviews.append({
+                "move_number": index + 1,
+                "cell": move["cell"],
+                "player": move["player"],
+                "correct": is_correct
+            })
+        
+        return move_reviews
