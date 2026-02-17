@@ -83,7 +83,6 @@ def _dnc_solve(game, cells):
     if not cells:
         return True
     
-    # BASE CASE: 1 cell — try both moves with backtracking
     if len(cells) == 1:
         r, c = cells[0]
         if game.grid[r][c] is not None:
@@ -94,7 +93,6 @@ def _dnc_solve(game, cells):
                 return True
         return False
     
-    # BASE CASE: Small regions — use direct backtracking
     if len(cells) <= 4:
         return _backtrack_cells(game, cells, 0)
     
@@ -118,11 +116,11 @@ def _dnc_solve(game, cells):
     
     quadrants = [q for q in [q1, q2, q3, q4] if q]
     
-    # If splitting didn't help (all cells in one quadrant), use backtracking
+    # If splitting didn't help (all cells in one quadrant)
     if len(quadrants) <= 1:
         return _backtrack_cells(game, cells, 0)
     
-    # CONQUER + COMBINE: Solve quadrants sequentially with backtracking
+    # CONQUER + COMBINE: Solve quadrants sequentially
     return _solve_quadrants_sequential(game, quadrants, 0)
 
 
@@ -146,14 +144,6 @@ def _solve_quadrants_sequential(game, quadrants, q_idx):
 
 
 def _backtrack_with_continuation(game, cells, cell_idx, quadrants, q_idx):
-    """
-    Backtracking fill for the current quadrant's cells, with a continuation
-    that attempts to solve remaining quadrants after this one is filled.
-    
-    This merges the CONQUER and COMBINE steps: we don't just find *any*
-    valid fill for the current quadrant — we find one that's compatible
-    with all remaining quadrants.
-    """
     if cell_idx >= len(cells):
         # Current quadrant fully filled — continue to next quadrant
         return _solve_quadrants_sequential(game, quadrants, q_idx + 1)
@@ -177,7 +167,6 @@ def _backtrack_with_continuation(game, cells, cell_idx, quadrants, q_idx):
 
 
 def _backtrack_cells(game, cells, idx):
-    """Simple backtracking for a small set of cells."""
     if idx >= len(cells):
         return True
     
