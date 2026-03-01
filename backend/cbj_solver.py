@@ -261,3 +261,137 @@ def solve_and_extract(game):
     else:
         return False, None
 
+# ==============================================================================
+# RECORDED VARIANT (for visualization)
+# ==============================================================================
+
+def _cbj_search_recorded(game, cells, idx, conflict_sets, steps):
+    """
+    Identical to _cbj_search but records each decision point as a step dict.
+    """
+    # Base case
+    if idx >= len(cells):
+        if _verify_solution(game):
+            steps.append({'action': 'SOLVED'})
+            return (True, -1)
+        else:
+            return (False, idx - 1)
+
+    r, c = cells[idx]
+    conflict_sets[idx] = set()
+
+    for mv in ['L', 'R']:
+        steps.append({'action': 'TRY', 'r': r, 'c': c, 'mv': mv})
+
+        if not game.is_move_valid(r, c, mv):
+            steps.append({'action': 'INVALID', 'r': r, 'c': c, 'mv': mv})
+
+            conflict_source = _find_conflict_source(game, cells, r, c, mv, idx)
+            if conflict_source >= 0:
+                conflict_sets[idx].add(conflict_source)
+                steps.append({
+                    'action': 'CONFLICT', 'r': r, 'c': c, 'mv': mv,
+                    'culprit_r': cells[conflict_source][0],
+                    'culprit_c': cells[conflict_source][1],
+                    'culprit_idx': conflict_source
+                })
+            continue
+
+        # Valid move — apply and recurse
+        game.apply_move(r, c, mv, check_validity=False, player='HUMAN')
+
+        success, jump_target = _cbj_search_recorded(game, cells, idx + 1, conflict_sets, steps)
+
+        if success:
+            steps.append({'action': 'PLACE', 'r': r, 'c': c, 'mv': mv})
+            return (True, -1)
+
+        # Merge conflict info from the child into our own conflict set
+        # (exclude self-references so we don't blame ourselves)
+        if idx + 1 < len(conflict_sets):
+            conflict_sets[idx] |= (conflict_sets[idx + 1] - {idx})
+            steps.append({'action': 'MERGE', 'merged_from': idx + 1, 'merged_into': idx})
+
+        game.undo()
+
+        # Conservative jump: only propagate immediately when jump_target < 0
+        # (unrecoverable failure). This matches the non-recorded variant.
+        if jump_target < 0:
+            if 0 <= idx - 1 < len(cells):
+                steps.append({
+                    'action': 'JUMP',
+                    'from_r': cells[idx][0], 'from_c': cells[idx][1], 'from_idx': idx,
+                    'to_r': cells[0][0], 'to_c': cells[0][1], 'to_idx': 0,
+                    'skipped': [{'r': cells[i][0], 'c': cells[i][1]} for i in range(1, idx)]
+                })
+            return (False, jump_target)
+        # Try next move
+
+    # All moves exhausted
+    steps.append({'action': 'BACKTRACK', 'r': r, 'c': c})
+
+    if conflict_sets[idx]:
+        jump_target = max(conflict_sets[idx])
+    else:
+        jump_target = idx - 1
+
+    # Record a JUMP if we're skipping cells (jump_target < idx - 1)
+    if jump_target >= 0 and jump_target < idx - 1:
+        skipped = [{'r': cells[i][0], 'c': cells[i][1]} for i in range(jump_target + 1, idx)]
+        steps.append({
+            'action': 'JUMP',
+            'from_r': r, 'from_c': c, 'from_idx': idx,
+            'to_r': cells[jump_target][0], 'to_c': cells[jump_target][1], 'to_idx': jump_target,
+            'skipped': skipped
+        })
+
+    return (False, jump_target)
+
+
+def solve_with_cbj_recorded(game):
+    """
+    Solve using CBJ and record every step for visualization.
+
+    Args:
+        game: SlantGame instance
+
+    Returns:
+        tuple: (success: bool, steps: list of step dicts)
+    """
+    steps = []
+    game_copy = copy.deepcopy(game)
+
+    # Clear the grid
+    size = game_copy.size
+    for r in range(size):
+        for c in range(size):
+            if game_copy.grid[r][c] is not None:
+                game_copy.remove_move(r, c)
+    game_copy.history = []
+    game_copy.scores = {'HUMAN': 0, 'CPU': 0}
+    game_copy.owners = [[None for _ in range(size)] for _ in range(size)]
+
+    cells = []
+    for r in range(size):
+        for c in range(size):
+            cells.append((r, c))
+
+    if not cells:
+        return _verify_solution(game_copy), steps
+
+    conflict_sets = [set() for _ in range(len(cells))]
+    success, _ = _cbj_search_recorded(game_copy, cells, 0, conflict_sets, steps)
+    return success, steps
+
+
+def get_cbj_stats(steps):
+    """Compute summary statistics from recorded CBJ steps."""
+    return {
+        'total_steps': len(steps),
+        'backtracks': sum(1 for s in steps if s['action'] == 'BACKTRACK'),
+        'jumps': sum(1 for s in steps if s['action'] == 'JUMP'),
+        'total_cells_skipped': sum(len(s.get('skipped', [])) for s in steps if s['action'] == 'JUMP'),
+        'conflicts_found': sum(1 for s in steps if s['action'] == 'CONFLICT'),
+        'placements': sum(1 for s in steps if s['action'] == 'PLACE'),
+    }
+
