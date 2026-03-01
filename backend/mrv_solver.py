@@ -306,3 +306,21 @@ def get_mrv_stats(steps):
         'placements': sum(1 for s in steps if s['action'] == 'PLACE'),
     }
 
+
+def solve_partial_with_mrv_recorded(game):
+    """
+    Solve a partially-filled board using MRV backtracking with step recording.
+    Does NOT clear the board — only fills empty cells while respecting existing moves.
+    
+    Args:
+        game: SlantGame instance (already has some moves placed)
+    
+    Returns:
+        tuple: (success: bool, steps: list of step dicts, game_copy: solved game)
+    """
+    steps = []
+    game_copy = copy.deepcopy(game)
+
+    # Don't clear! Just run the solver on the existing partial board.
+    success = _mrv_backtrack_recorded(game_copy, steps)
+    return success, steps, game_copy
