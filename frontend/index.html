@@ -11,13 +11,149 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         }
+
+        .viz-panel {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .viz-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .viz-stats {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .viz-stat {
+            background: #0f0f23;
+            border-radius: 8px;
+            padding: 8px 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #888;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .viz-progress {
+            margin-bottom: 12px;
+        }
+
+        .viz-progress-bar {
+            background: #333;
+            border-radius: 4px;
+            height: 8px;
+            overflow: hidden;
+        }
+
+        #viz-progress-fill {
+            background: linear-gradient(90deg, #34d399, #60a5fa);
+            height: 100%;
+            transition: width 0.2s;
+        }
+
+        .viz-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .viz-speed {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #aaa;
+        }
+
+        .viz-speed select {
+            background: #0f0f23;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 4px 8px;
+        }
+
+        .viz-legend {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+            font-size: 12px;
+        }
+
+        .viz-log {
+            max-height: 120px;
+            overflow-y: auto;
+            background: #0f0f23;
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 12px;
+            font-family: monospace;
+            color: #aaa;
+        }
+
+        .cell-try {
+            background: rgba(251, 191, 36, 0.35) !important;
+        }
+
+        .cell-forced {
+            background: rgba(52, 211, 153, 0.35) !important;
+        }
+
+        .cell-backtrack {
+            background: rgba(251, 146, 60, 0.35) !important;
+        }
+
+        .cell-dead-end {
+            background: rgba(239, 68, 68, 0.35) !important;
+        }
+
+        .cell-jump {
+            background: rgba(96, 165, 250, 0.35) !important;
+        }
+
+        .cell-conflict {
+            background: rgba(167, 139, 250, 0.35) !important;
+        }
+
+        .cell-place {
+            background: rgba(255, 255, 255, 0.15) !important;
+        }
+
+        .cell-skipped {
+            background: rgba(251, 146, 60, 0.15) !important;
+        }
     </style>
 </head>
 
 <body>
     <div class="app-container">
         <header>
-            <h1>SLANT</h1>
+            <div class="header-title-row">
+                <h1>SLANT</h1>
+                <button id="help-btn" class="help-bulb-btn" title="Game Instructions">💡</button>
+            </div>
             <p class="subtitle">Graph Theory Project</p>
         </header>
 
@@ -66,6 +202,22 @@
                 </div>
             </div>
 
+            <!-- Comparison Charts (shown after board is solved) -->
+            <div id="compare-charts" class="compare-charts hidden">
+                <div class="chart-panel">
+                    <h3>⏱ Time Comparison</h3>
+                    <div id="time-chart" class="bar-chart"></div>
+                </div>
+                <div class="chart-panel">
+                    <h3>📈 Time Complexity (Big-O)</h3>
+                    <div id="complexity-chart" class="bar-chart"></div>
+                </div>
+                <div class="chart-panel">
+                    <h3>💾 Space Comparison</h3>
+                    <div id="space-chart" class="bar-chart"></div>
+                </div>
+            </div>
+
             <div class="controls-area">
                 <div class="controls">
                     <button id="new-game-btn" class="btn primary">New Game</button>
@@ -73,18 +225,66 @@
                     <button id="multiplayer-btn" class="btn secondary">Multiplayer</button>
                     <button id="solve-btn" class="btn secondary"
                         style="border-color: #f472b6; color: #f472b6;">Solve</button>
-                    <button id="solve-dp-btn" class="btn secondary" style="border-color: #a78bfa; color: #a78bfa;">Solve
-                        (DP)</button>
-                    <button id="solve-dnc-btn" class="btn secondary"
-                        style="border-color: #2dd4bf; color: #2dd4bf;">Solve (D&C)</button>
-                    <button id="solve-cut-btn" class="btn secondary"
-                        style="border-color: #fb923c; color: #fb923c;">Solve (Cut)</button>
-                    <button id="solve-hybrid-btn" class="btn secondary"
-                        style="border-color: #f43f5e; color: #f43f5e;">Solve (Hybrid)</button>
-                    <button id="help-btn" class="btn secondary" style="border-color: #fbbf24; color: #fbbf24;">❓
-                        Help</button>
-                    <button id="review-btn" class="btn secondary" style="border-color: #10b981; color: #10b981;">📊
+                    <button id="solve-select-btn" class="btn secondary"
+                        style="border-color: #a78bfa; color: #a78bfa;">🧩 Choose Solver</button>
+                    <button id="viz-select-btn" class="btn secondary" style="border-color: #34d399; color: #34d399;">▶
+                        Visualize</button>
+                    <button id="analysis-btn" class="btn secondary" style="border-color: #10b981; color: #10b981;">📊
+                        Analysis</button>
+                    <button id="review-btn" class="btn secondary" style="border-color: #fbbf24; color: #fbbf24;">📋
                         Review</button>
+                </div>
+            </div>
+
+            <!-- Backtracking Visualization Panel -->
+            <div id="viz-panel" class="viz-panel hidden">
+                <div class="viz-header">
+                    <h3 id="viz-title">Backtracking Visualization</h3>
+                    <button id="viz-close-btn" class="close-modal-btn">✖</button>
+                </div>
+                <div class="viz-stats">
+                    <div class="viz-stat"><span class="stat-label">Steps</span><span class="stat-value" id="val-steps">0
+                            / 0</span></div>
+                    <div class="viz-stat"><span class="stat-label">Backtracks</span><span class="stat-value"
+                            id="val-backtracks">0</span></div>
+                    <div class="viz-stat" id="stat-jumps"><span class="stat-label">CBJ Jumps</span><span
+                            class="stat-value" id="val-jumps">0</span></div>
+                    <div class="viz-stat" id="stat-skipped"><span class="stat-label">Cells Skipped</span><span
+                            class="stat-value" id="val-skipped">0</span></div>
+                    <div class="viz-stat" id="stat-forced"><span class="stat-label">Forced Moves</span><span
+                            class="stat-value" id="val-forced">0</span></div>
+                </div>
+                <div class="viz-progress">
+                    <div class="viz-progress-bar">
+                        <div id="viz-progress-fill" style="width:0%"></div>
+                    </div>
+                </div>
+                <div class="viz-controls">
+                    <button id="viz-play-btn" class="btn primary">▶ Play</button>
+                    <button id="viz-pause-btn" class="btn secondary hidden">⏸ Pause</button>
+                    <button id="viz-step-btn" class="btn secondary">⏭ Step</button>
+                    <button id="viz-reset-btn" class="btn secondary">↺ Reset</button>
+                    <div class="viz-speed">
+                        <label>Speed:</label>
+                        <select id="viz-speed-select">
+                            <option value="800">Slow</option>
+                            <option value="300" selected>Medium</option>
+                            <option value="80">Fast</option>
+                            <option value="10">Turbo</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="viz-legend">
+                    <span class="legend-item">🟡 Trying</span>
+                    <span class="legend-item">🟢 Forced</span>
+                    <span class="legend-item">🟠 Backtrack</span>
+                    <span class="legend-item">🔴 Dead End</span>
+                    <span class="legend-item">🔵 CBJ Jump</span>
+                    <span class="legend-item">🟣 Conflict</span>
+                    <span class="legend-item">⬜ Placed</span>
+                </div>
+                <div class="viz-log">
+                    <div id="viz-log-content"></div>
                 </div>
             </div>
 
@@ -146,7 +346,13 @@
                                 <li><strong>Dynamic Programming:</strong> Row-by-row DP with memoization</li>
                                 <li><strong>Divide & Conquer:</strong> Quadrant-based recursive solving</li>
                                 <li><strong>Hybrid (D&C + DP):</strong> D&C partitioning with DP solving</li>
-                                <li><strong>Cut-based Partition:</strong> Minimal cut region solving</li>
+
+                                <li><strong>MRV Backtracking:</strong> Fills most constrained cell first using Minimum
+                                    Remaining Values heuristic</li>
+                                <li><strong>Conflict-Directed Backjumping:</strong> Jumps directly to conflict source on
+                                    failure instead of chronological backtracking</li>
+                                <li><strong>Forward Checking:</strong> Prunes neighbour domains after each assignment;
+                                    backtracks immediately on domain wipeout</li>
                             </ul>
                             <p class="tip">💡 All solvers use pure algorithmic approaches - no greedy heuristics!</p>
                         </div>
@@ -196,14 +402,38 @@
                     </div>
                 </div>
 
-                <div class="strategy-option" data-solver="cut">
+
+
+                <div class="strategy-option" data-solver="mrv">
                     <div class="strategy-title">
                         <span class="strategy-badge"
-                            style="background: linear-gradient(135deg, #fb923c, #fdba74);">🔺</span>
-                        <span>Cut-based Partition</span>
+                            style="background: linear-gradient(135deg, #818cf8, #a5b4fc);">🔹</span>
+                        <span>MRV Backtracking</span>
                     </div>
                     <div class="strategy-description">
-                        Identifies independent regions and solves recursively. Optimal for sparse constraints.
+                        Fills the most constrained cell first using Minimum Remaining Values heuristic.
+                    </div>
+                </div>
+
+                <div class="strategy-option" data-solver="cbj">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">🔸</span>
+                        <span>Conflict-Directed Backjumping</span>
+                    </div>
+                    <div class="strategy-description">
+                        Jumps directly to the conflict source on failure instead of chronological backtracking.
+                    </div>
+                </div>
+
+                <div class="strategy-option" data-solver="fc">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #e879f9, #d946ef);">🔻</span>
+                        <span>Forward Checking</span>
+                    </div>
+                    <div class="strategy-description">
+                        Prunes neighbour domains after each assignment; backtracks on domain wipeout.
                     </div>
                 </div>
             </div>
@@ -224,6 +454,132 @@
             </div>
             <div class="strategy-actions">
                 <button id="close-review-btn" class="btn primary">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Solve Selection Modal (grouped) -->
+    <div id="solve-select-modal" class="strategy-modal hidden">
+        <div class="strategy-content">
+            <h2>🧩 Choose Solver & Solve</h2>
+            <p>Select a solver to immediately solve the puzzle:</p>
+
+            <h4 style="color: #a78bfa; margin: 12px 0 8px;">Classic Solvers</h4>
+            <div class="strategy-options">
+                <div class="strategy-option solve-pick" data-solver="dp">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #a78bfa, #c084fc);">🔷</span>
+                        <span>Dynamic Programming</span>
+                    </div>
+                    <div class="strategy-description">
+                        Row-by-row DP with memoization. Efficient for medium-sized grids.
+                    </div>
+                </div>
+                <div class="strategy-option solve-pick" data-solver="dnc">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #2dd4bf, #5eead4);">🔶</span>
+                        <span>Divide & Conquer</span>
+                    </div>
+                    <div class="strategy-description">
+                        Quadrant-based recursive solving. Good for large grids.
+                    </div>
+                </div>
+                <div class="strategy-option solve-pick" data-solver="hybrid">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #f43f5e, #fb7185);">🔸</span>
+                        <span>Hybrid (D&C + DP)</span>
+                    </div>
+                    <div class="strategy-description">
+                        D&C partitioning with DP solving. Best for complex puzzles.
+                    </div>
+                </div>
+
+            </div>
+
+            <h4 style="color: #818cf8; margin: 18px 0 8px;">Backtracking Solvers</h4>
+            <div class="strategy-options">
+                <div class="strategy-option solve-pick" data-solver="mrv">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #818cf8, #a5b4fc);">🔹</span>
+                        <span>MRV Backtracking</span>
+                    </div>
+                    <div class="strategy-description">
+                        Fills the most constrained cell first using MRV heuristic.
+                    </div>
+                </div>
+                <div class="strategy-option solve-pick" data-solver="cbj">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #f59e0b, #fbbf24);">🔸</span>
+                        <span>Conflict-Directed Backjumping</span>
+                    </div>
+                    <div class="strategy-description">
+                        Jumps directly to the conflict source on failure.
+                    </div>
+                </div>
+                <div class="strategy-option solve-pick" data-solver="fc">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #e879f9, #d946ef);">🔻</span>
+                        <span>Forward Checking</span>
+                    </div>
+                    <div class="strategy-description">
+                        Prunes neighbour domains after each assignment.
+                    </div>
+                </div>
+            </div>
+
+            <div class="strategy-actions">
+                <button id="cancel-solve-select-btn" class="btn secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Visualize Selection Modal -->
+    <div id="viz-select-modal" class="strategy-modal hidden">
+        <div class="strategy-content">
+            <h2>▶ Choose Visualization</h2>
+            <p>Watch the backtracking solver step-by-step:</p>
+
+            <div class="strategy-options">
+                <div class="strategy-option viz-pick" data-solver="mrv">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #34d399, #6ee7b7);">🔹</span>
+                        <span>MRV Backtracking</span>
+                    </div>
+                    <div class="strategy-description">
+                        Visualize how MRV picks the most constrained cell at each step.
+                    </div>
+                </div>
+                <div class="strategy-option viz-pick" data-solver="cbj">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #60a5fa, #93c5fd);">🔸</span>
+                        <span>Conflict-Directed Backjumping</span>
+                    </div>
+                    <div class="strategy-description">
+                        Visualize conflict detection and intelligent backjumping.
+                    </div>
+                </div>
+                <div class="strategy-option viz-pick" data-solver="fc">
+                    <div class="strategy-title">
+                        <span class="strategy-badge"
+                            style="background: linear-gradient(135deg, #e879f9, #d946ef);">🔻</span>
+                        <span>Forward Checking</span>
+                    </div>
+                    <div class="strategy-description">
+                        Visualize domain pruning and early dead-end detection.
+                    </div>
+                </div>
+            </div>
+
+            <div class="strategy-actions">
+                <button id="cancel-viz-select-btn" class="btn secondary">Cancel</button>
             </div>
         </div>
     </div>
