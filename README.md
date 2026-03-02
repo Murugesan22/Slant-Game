@@ -1,6 +1,6 @@
 # SLANT - Interactive Puzzle Game
 
-A graph theory-based puzzle game featuring advanced algorithmic solvers, constraint satisfaction, and cycle detection.
+A graph theory-based puzzle game featuring greedy algorithms, constraint satisfaction, and cycle detection.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -8,7 +8,7 @@ A graph theory-based puzzle game featuring advanced algorithmic solvers, constra
 - [How to Play](#how-to-play)
 - [Scoring System](#scoring-system)
 - [Game Modes](#game-modes)
-- [Algorithmic Solvers](#algorithmic-solvers)
+- [Sorting Mechanism (Custom Quicksort)](#sorting-mechanism-custom-quicksort)
 - [Installation & Setup](#installation--setup)
 
 ---
@@ -19,10 +19,9 @@ SLANT is an educational puzzle game that demonstrates graph theory concepts thro
 
 ### Key Features
 - **Puzzle Solving**: Complete grids by placing diagonal slashes
-- **AI Opponent**: Compete against CPU using advanced algorithms (DP, D&C, Hybrid, Cut)
+- **AI Opponent**: Compete against CPU using greedy algorithms
 - **Graph Theory**: Learn cycle detection and constraint satisfaction
-- **Multiple Solvers**: Choose from 4 different algorithmic approaches
-- **Review Mode**: Analyze your moves with chess-like notation
+- **Multiple Strategies**: Choose from 3 different AI behaviors
 - **Responsive Design**: Beautiful UI with animations and sound effects
 - **Variable Difficulty**: Multiple board sizes (3×3, 5×5, 7×7, 9×9)
 
@@ -78,12 +77,10 @@ Complete the grid by filling every cell with diagonal slashes (\ or /) while sat
 
 **Enable Multiplayer**
 - Click the "Multiplayer" button
-- Click the "Multiplayer" button
-- Select one of four algorithmic solvers:
-  - **Dynamic Programming (DP)**: Row-by-row solving with memoization
-  - **Divide & Conquer**: Quadrant-based recursive solving
-  - **Hybrid**: Combines D&C partitioning with DP
-  - **Cut-based**: Solves independent regions recursively
+- Select one of three CPU strategies:
+  - Strategy 1: Constraint-Focused (logical, methodical)
+  - Strategy 2: Edge-First (perimeter-focused)
+  - Strategy 3: Random-Greedy (unpredictable)
 - Click "Confirm"
 
 **Turn-Based Play**
@@ -103,11 +100,6 @@ Complete the grid by filling every cell with diagonal slashes (\ or /) while sat
 | Undo | Revert the last move |
 | Multiplayer | Toggle between single-player and multiplayer modes |
 | Solve | Auto-complete the puzzle using backtracking algorithm |
-| Solve (DP) | Solve using Dynamic Programming |
-| Solve (D&C) | Solve using Divide & Conquer |
-| Solve (Cut) | Solve using Cut-based Partitioning |
-| Solve (Hybrid) | Solve using Hybrid approach |
-| Review | Review past moves with chess notation |
 | Board Size | Choose grid size: 3×3, 5×5, 7×7, or 9×9 |
 
 ---
@@ -169,41 +161,31 @@ Points are awarded based on strategic placement and puzzle-solving skill. Both h
 - Best For: Challenge, strategic gameplay, testing algorithms
 
 ### Solve Mode
-- Description: Auto-complete using selected algorithm
+- Description: Auto-complete using backtracking algorithm
 - Turns: Algorithm takes over
 - Scoring: No points awarded
 - Goal: Demonstrate a valid solution exists
 - Best For: Getting unstuck, learning correct patterns
 
-### Review Mode
-- Description: Analyze game history
-- Features:
-  - Step-by-step move replay
-  - Chess-like notation (e.g., A1, B3)
-  - Visual validation of moves
-- Best For: Post-game analysis, improving strategy
-
 ---
 
-## Algorithmic Solvers
+## Sorting Mechanism (Custom Quicksort)
 
-The game now features advanced solvers that replace simple greedy heuristics. These solvers guarantee correctness and can handle complex grid constraints.
+To efficiently select CPU moves, the game implements a custom Quicksort algorithm for sorting candidate moves based on heuristic scores.
 
-### 1. Dynamic Programming (DP)
-- **Method**: Solves the grid row-by-row, memoizing valid partial states (profile DP).
-- **Best For**: Medium-sized grids where connectivity matters.
+- During each CPU turn, multiple valid moves are evaluated by the selected greedy strategy. Each move is assigned a score, and sorting ensures that higher-priority moves are considered first.
 
-### 2. Divide & Conquer (D&C)
-- **Method**: Recursively splits the grid into quadrants, solving each independently and merging results.
-- **Best For**: Large grids with balanced constraints.
+### Where It Is Used
+- In the Constraint-Focused strategy, moves near important constraints are ranked.
+- In the Edge-First strategy, cells are sorted based on distance from the center.
+- In the Random-Greedy strategy, moves are sorted before selecting randomly from top candidates.
 
-### 3. Hybrid Solver
-- **Method**: Uses D&C to partition the grid, then switches to DP for smaller sub-grids.
-- **Best For**: Complex puzzles requiring both decomposition and precise local solving.
+### Why Quicksort
+- Efficient average-case performance
+- Supports key-based and descending sorting
+- Demonstrates practical use of a divide-and-conquer sorting technique
 
-### 4. Cut-based Partition
-- **Method**: Identifies independent regions (connected components) separated by completed lines and solves them individually.
-- **Best For**: Sparse constraints where the graph naturally separates.
+This sorting mechanism improves AI decision quality and scalability across different board sizes.
 
 ---
 
@@ -216,12 +198,17 @@ The game now features advanced solvers that replace simple greedy heuristics. Th
 
 ### Installation Steps
 
-**1. Install Dependencies**
+**1. Clone or Download the Project**
+```bash
+cd "e:\Games\backup2\DAA PROJECT"
+```
+
+**2. Install Dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-**2. Start the Backend Server**
+**3. Start the Backend Server**
 
 Open a terminal and run:
 ```bash
@@ -229,7 +216,7 @@ python backend/app.py
 ```
 This starts the Flask API server on http://localhost:5000. Keep this terminal running.
 
-**3. Start the Frontend Server**
+**4. Start the Frontend Server**
 
 Open a new terminal and run:
 ```bash
@@ -237,7 +224,7 @@ python -m http.server 8000 --directory frontend
 ```
 This serves the UI on http://localhost:8000. Keep this terminal running too.
 
-**4. Open in Browser**
+**5. Open in Browser**
 
 Navigate to http://localhost:8000
 
@@ -247,16 +234,14 @@ Slant-Game/
 ├── backend/
 │   ├── app.py              # Flask API server
 │   ├── game_logic.py       # Core game logic and graph algorithms
-│   ├── cpu_ai.py           # AI solvers interface
-│   ├── dp_solver.py        # Dynamic Programming implementation
-│   └── dnc_solver.py       # Divide & Conquer implementation
+│   └── cpu_ai.py           # AI strategies
 ├── frontend/
 │   ├── index.html          # Main UI
 │   ├── style.css           # Styling
 │   └── script.js           # Frontend logic
 ├── README.md               # This file
 ├── GAME_RULES.md           # Detailed game rules
-├── DP_AND_DNC_STRATEGIES.md # Detailed solver documentation
+├── GREEDY_STRATEGIES.md    # AI strategy documentation
 └── requirements.txt        # Python dependencies
 ```
 
