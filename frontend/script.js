@@ -15,7 +15,7 @@ const CELL_SIZE = 60; // Must match CSS
 const GRID_GAP = 2; // Must match CSS
 let currentSize = 5;
 let multiplayerMode = false; // Track multiplayer mode state
-let selectedSolver = 'dp'; // Track selected solver: 'dp', 'dnc', 'hybrid', 'cut'
+let selectedSolver = 'dp'; // Track selected solver: 'dp', 'dnc', 'hybrid', 'mrv', 'cbj', 'fc'
 let cpuTimedOut = false; // Set when CPU exceeds time limit
 
 // Init
@@ -48,17 +48,101 @@ undoBtn.addEventListener('click', undoLastMove);
 multiplayerBtn.addEventListener('click', toggleMultiplayerMode);
 solveBtn.addEventListener('click', solveGame);
 
-// New DP and D&C solve buttons
-const solveDpBtn = document.getElementById('solve-dp-btn');
-const solveDncBtn = document.getElementById('solve-dnc-btn');
-const solveCutBtn = document.getElementById('solve-cut-btn');
-const solveHybridBtn = document.getElementById('solve-hybrid-btn');
+// Solve Selection Modal
+const solveSelectBtn = document.getElementById('solve-select-btn');
+const solveSelectModal = document.getElementById('solve-select-modal');
+const cancelSolveSelectBtn = document.getElementById('cancel-solve-select-btn');
+
+// Visualize Selection Modal
+const vizSelectBtn = document.getElementById('viz-select-btn');
+const vizSelectModal = document.getElementById('viz-select-modal');
+const cancelVizSelectBtn = document.getElementById('cancel-viz-select-btn');
+
+// Analysis button toggles the 3 comparison charts — only after board is solved
+const analysisBtn = document.getElementById('analysis-btn');
+if (analysisBtn) analysisBtn.addEventListener('click', () => {
+    // Guard: only allow after board has been fully solved
+    const solvedStatuses = ['COMPLETED', 'WIN_HUMAN', 'WIN_CPU', 'DRAW'];
+    if (!currentState || !solvedStatuses.includes(currentState.status)) {
+        // Flash a warning on the status bar
+        const prevText = statusEl.textContent;
+        const prevColor = statusEl.style.color;
+        statusEl.textContent = '⚠️ Solve the board first to view Analysis!';
+        statusEl.style.color = '#fbbf24';
+        playSound('error');
+        setTimeout(() => {
+            statusEl.textContent = prevText;
+            statusEl.style.color = prevColor;
+        }, 2500);
+        return;
+    }
+
+    const charts = document.getElementById('compare-charts');
+    if (!charts) return;
+    const isHidden = charts.classList.contains('hidden');
+    if (isHidden) {
+        charts.classList.remove('hidden');
+        loadComparisonCharts();
+        analysisBtn.textContent = '📊 Analysis ✕';
+        analysisBtn.style.borderColor = '#f472b6';
+        analysisBtn.style.color = '#f472b6';
+    } else {
+        charts.classList.add('hidden');
+        analysisBtn.textContent = '📊 Analysis';
+        analysisBtn.style.borderColor = '#10b981';
+        analysisBtn.style.color = '#10b981';
+    }
+    playSound('click');
+});
+
+// Review button
 const reviewBtn = document.getElementById('review-btn');
-if (solveDpBtn) solveDpBtn.addEventListener('click', solveDP);
-if (solveDncBtn) solveDncBtn.addEventListener('click', solveDnC);
-if (solveCutBtn) solveCutBtn.addEventListener('click', solveBoundaryCut);
-if (solveHybridBtn) solveHybridBtn.addEventListener('click', solveHybrid);
 if (reviewBtn) reviewBtn.addEventListener('click', reviewMoves);
+
+// Solver dispatch map
+const solverFunctions = {
+    'dp': solveDP,
+    'dnc': solveDnC,
+    'hybrid': solveHybrid,
+    'mrv': solveMRV,
+    'cbj': solveCBJ,
+    'fc': solveFC
+};
+
+// Open / close Solve Selection modal
+if (solveSelectBtn) solveSelectBtn.addEventListener('click', () => {
+    solveSelectModal.classList.remove('hidden');
+});
+if (cancelSolveSelectBtn) cancelSolveSelectBtn.addEventListener('click', () => {
+    solveSelectModal.classList.add('hidden');
+});
+
+// Click a solver option => solve immediately & close modal
+document.querySelectorAll('.solve-pick').forEach(opt => {
+    opt.addEventListener('click', () => {
+        const solver = opt.dataset.solver;
+        solveSelectModal.classList.add('hidden');
+        const fn = solverFunctions[solver];
+        if (fn) fn();
+    });
+});
+
+// Open / close Visualize Selection modal
+if (vizSelectBtn) vizSelectBtn.addEventListener('click', () => {
+    vizSelectModal.classList.remove('hidden');
+});
+if (cancelVizSelectBtn) cancelVizSelectBtn.addEventListener('click', () => {
+    vizSelectModal.classList.add('hidden');
+});
+
+// Click a viz option => start visualization & close modal
+document.querySelectorAll('.viz-pick').forEach(opt => {
+    opt.addEventListener('click', () => {
+        const solver = opt.dataset.solver;
+        vizSelectModal.classList.add('hidden');
+        startVisualization(solver);
+    });
+});
 
 // Help button for instructions modal
 const helpBtn = document.getElementById('help-btn');
@@ -115,6 +199,18 @@ async function newGame() {
         currentState = data;
         renderBoard(data);
         statusEl.textContent = "Player Turn";
+        // Hide charts and legend from previous game
+        const charts = document.getElementById('compare-charts');
+        if (charts) charts.classList.add('hidden');
+        const legend = document.getElementById('bt-legend');
+        if (legend) legend.classList.add('hidden');
+        // Reset analysis button label
+        const aBtn = document.getElementById('analysis-btn');
+        if (aBtn) {
+            aBtn.textContent = '📊 Analysis';
+            aBtn.style.borderColor = '#10b981';
+            aBtn.style.color = '#10b981';
+        }
     } catch (e) {
         console.error("Error starting game:", e);
         statusEl.textContent = "Error connecting to backend.";
@@ -360,7 +456,9 @@ function checkGameStatus(state) {
         'dp': 'Dynamic Programming',
         'dnc': 'Divide & Conquer',
         'hybrid': 'Hybrid (D&C + DP)',
-        'cut': 'Cut-based Partition'
+        'mrv': 'MRV Backtracking',
+        'cbj': 'Conflict-Directed Backjumping',
+        'fc': 'Forward Checking'
     };
     const algoLabel = solverLabels[selectedSolver] || 'Algorithmic';
 
@@ -399,6 +497,24 @@ function checkGameStatus(state) {
         winOverlay.classList.remove('hidden');
 
         cleanupExtraButtons();
+
+        // Add Backtrack & Fix button in multiplayer mode
+        if (multiplayerMode) {
+            const winContentDiv = document.querySelector('.win-content');
+            if (winContentDiv && !document.getElementById('backtrack-fix-btn')) {
+                const backtrackBtn = document.createElement('button');
+                backtrackBtn.id = 'backtrack-fix-btn';
+                backtrackBtn.className = 'btn primary backtrack-fix-btn';
+                backtrackBtn.textContent = '🔄 Backtrack & Fix';
+                backtrackBtn.addEventListener('click', () => {
+                    winOverlay.classList.add('hidden');
+                    startBacktrackFix();
+                });
+                // Insert before close button
+                const closeBtn = document.getElementById('close-win-btn');
+                winContentDiv.insertBefore(backtrackBtn, closeBtn);
+            }
+        }
 
         playSound('error');
     } else {
@@ -763,6 +879,254 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// ==============================================================================
+// BACKTRACKING VISUALIZATION
+// ==============================================================================
+
+let vizSteps = [];
+let vizCurrentStep = 0;
+let vizIsPlaying = false;
+let vizTimer = null;
+let vizSolver = 'mrv';
+let vizFinalGrid = null;
+
+async function startVisualization(solver) {
+    vizSolver = solver;
+    statusEl.textContent = `Loading ${solver.toUpperCase()} visualization...`;
+    try {
+        const res = await fetch(`${API_URL}/visualize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ solver })
+        });
+        const data = await res.json();
+        if (!data.steps) { alert('Visualization failed: ' + data.message); return; }
+        vizSteps = data.steps || [];
+        vizFinalGrid = data.final_grid;
+        vizCurrentStep = 0;
+        vizIsPlaying = false;
+        document.getElementById('viz-panel').classList.remove('hidden');
+        document.getElementById('viz-title').textContent =
+            (solver === 'mrv' ? 'MRV Backtracking' : solver === 'fc' ? 'Forward Checking' : 'Conflict-Directed Backjumping') + ' — Visualization';
+        const isCBJ = solver === 'cbj';
+        const isFC = solver === 'fc';
+        document.getElementById('stat-jumps').classList.toggle('hidden', !isCBJ);
+        document.getElementById('stat-skipped').classList.toggle('hidden', !isCBJ && !isFC);
+        document.getElementById('stat-forced').classList.toggle('hidden', isCBJ);
+
+        // Relabel "Cells Skipped" to "Pruned" for FC
+        if (isFC) {
+            const skippedLabel = document.querySelector('#stat-skipped .stat-label');
+            if (skippedLabel) skippedLabel.textContent = 'Pruned';
+        } else {
+            const skippedLabel = document.querySelector('#stat-skipped .stat-label');
+            if (skippedLabel) skippedLabel.textContent = 'Cells Skipped';
+        }
+
+        const stats = data.stats || {};
+        document.getElementById('val-backtracks').textContent = stats.backtracks || 0;
+        document.getElementById('val-jumps').textContent = stats.jumps || 0;
+        document.getElementById('val-skipped').textContent = (isFC ? (stats.prunes || 0) : (stats.total_cells_skipped || 0));
+        document.getElementById('val-forced').textContent = stats.forced_moves || 0;
+        updateVizUI();
+        clearVizHighlights();
+        document.getElementById('viz-log-content').innerHTML = '';
+        statusEl.textContent = data.message || 'Visualization ready';
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = 'Visualization error';
+    }
+}
+
+function updateVizUI() {
+    document.getElementById('val-steps').textContent = `${vizCurrentStep} / ${vizSteps.length}`;
+    const pct = vizSteps.length > 0 ? (vizCurrentStep / vizSteps.length) * 100 : 0;
+    document.getElementById('viz-progress-fill').style.width = pct + '%';
+}
+
+function clearVizHighlights() {
+    document.querySelectorAll('.cell').forEach(el => {
+        el.classList.remove('cell-try', 'cell-forced', 'cell-backtrack', 'cell-dead-end', 'cell-jump', 'cell-conflict', 'cell-place', 'cell-skipped');
+    });
+}
+
+function getCellEl(r, c) {
+    return document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+}
+
+function flashCell(r, c, cls, clearAfterMs) {
+    const el = getCellEl(r, c);
+    if (!el) return;
+    el.classList.remove('cell-try', 'cell-forced', 'cell-backtrack', 'cell-dead-end', 'cell-jump', 'cell-conflict', 'cell-place', 'cell-skipped');
+    el.classList.add(cls);
+    if (clearAfterMs) setTimeout(() => el.classList.remove(cls), clearAfterMs);
+}
+
+function addVizLog(msg) {
+    const logEl = document.getElementById('viz-log-content');
+    const line = document.createElement('div');
+    line.textContent = `[${vizCurrentStep}] ${msg}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setVizSlash(r, c, mv) {
+    const el = getCellEl(r, c);
+    if (!el) return;
+    // Use the same CSS class mechanism as renderBoard:
+    // .slash-L draws a backslash via ::before, .slash-R draws a forward slash
+    el.classList.remove('slash-L', 'slash-R');
+    if (mv === 'L') {
+        el.classList.add('slash-L');
+    } else if (mv === 'R') {
+        el.classList.add('slash-R');
+    }
+}
+
+function clearVizSlash(r, c) {
+    setVizSlash(r, c, null);
+}
+
+function applyVizStep(step) {
+    const { action, r, c, mv } = step;
+    switch (action) {
+        case 'MRV_SELECT':
+            flashCell(r, c, 'cell-try', 0);
+            addVizLog(`MRV selected (${r},${c}) — ${step.options} option(s)`);
+            break;
+        case 'TRY':
+            flashCell(r, c, 'cell-try', 0);
+            setVizSlash(r, c, mv);
+            addVizLog(`Try '${mv}' at (${r},${c})`);
+            break;
+        case 'FORCED':
+            flashCell(r, c, 'cell-forced', 0);
+            setVizSlash(r, c, mv);
+            addVizLog(`Forced '${mv}' at (${r},${c}) — only option`);
+            break;
+        case 'INVALID':
+            flashCell(r, c, 'cell-dead-end', 400);
+            addVizLog(`Invalid '${mv}' at (${r},${c})`);
+            break;
+        case 'BACKTRACK':
+            flashCell(r, c, 'cell-backtrack', 0);
+            clearVizSlash(r, c);
+            addVizLog(`Backtrack at (${r},${c})`);
+            break;
+        case 'DEAD_END':
+            flashCell(r, c, 'cell-dead-end', 0);
+            clearVizSlash(r, c);
+            addVizLog(`Dead end at (${r},${c}) — 0 options`);
+            break;
+        case 'PLACE':
+            flashCell(r, c, 'cell-place', 0);
+            setVizSlash(r, c, mv);
+            addVizLog(`Placed '${mv}' at (${r},${c})`);
+            break;
+        case 'CONFLICT':
+            flashCell(r, c, 'cell-dead-end', 0);
+            flashCell(step.culprit_r, step.culprit_c, 'cell-conflict', 600);
+            addVizLog(`Conflict at (${r},${c}) caused by (${step.culprit_r},${step.culprit_c})`);
+            break;
+        case 'JUMP':
+            flashCell(step.from_r, step.from_c, 'cell-dead-end', 0);
+            flashCell(step.to_r, step.to_c, 'cell-jump', 0);
+            (step.skipped || []).forEach(s => {
+                flashCell(s.r, s.c, 'cell-skipped', 800);
+                clearVizSlash(s.r, s.c);
+            });
+            addVizLog(`CBJ JUMP (${step.from_r},${step.from_c}) → (${step.to_r},${step.to_c}), skipped ${(step.skipped || []).length} cells`);
+            break;
+        case 'MERGE':
+            addVizLog(`Merge conflict sets: idx ${step.merged_from} → ${step.merged_into}`);
+            break;
+        case 'PRUNE':
+            flashCell(r, c, 'cell-conflict', 400);
+            addVizLog(`Pruned '${(step.removed || []).join(',')}' from (${r},${c}) — caused by (${step.cause_r},${step.cause_c})='${step.cause_mv}'`);
+            break;
+        case 'SOLVED':
+            clearVizHighlights();
+            addVizLog('✅ Solution found! Applying to board...');
+            // Sync selectedSolver so the Victory overlay shows the correct algorithm
+            selectedSolver = vizSolver;
+            // Call the real solver API to get the authoritative solved state
+            // (vizFinalGrid alone doesn't carry node degrees / owners / etc.)
+            (async () => {
+                try {
+                    const routeMap = { 'cbj': 'solve_cbj', 'mrv': 'solve_mrv', 'fc': 'solve_fc' };
+                    const route = routeMap[vizSolver] || 'solve_mrv';
+                    const resp = await fetch(`${API_URL}/${route}`, { method: 'POST' });
+                    const data = await resp.json();
+                    if (data.success) {
+                        currentState = data.state;
+                        renderBoard(currentState);
+                        statusEl.textContent = data.message || `Solved with ${vizSolver.toUpperCase()}!`;
+                    }
+                } catch (e) { console.error('Viz SOLVED render error', e); }
+            })();
+            break;
+    }
+    vizCurrentStep++;
+    updateVizUI();
+}
+
+function stepViz() {
+    if (vizCurrentStep >= vizSteps.length) { stopVizPlayback(); return; }
+    applyVizStep(vizSteps[vizCurrentStep]);
+}
+
+function startVizPlayback() {
+    if (vizIsPlaying) return;
+    vizIsPlaying = true;
+    document.getElementById('viz-play-btn').classList.add('hidden');
+    document.getElementById('viz-pause-btn').classList.remove('hidden');
+    const speed = parseInt(document.getElementById('viz-speed-select').value);
+    function tick() {
+        if (!vizIsPlaying || vizCurrentStep >= vizSteps.length) { stopVizPlayback(); return; }
+        applyVizStep(vizSteps[vizCurrentStep]);
+        vizTimer = setTimeout(tick, speed);
+    }
+    tick();
+}
+
+function stopVizPlayback() {
+    vizIsPlaying = false;
+    clearTimeout(vizTimer);
+    document.getElementById('viz-play-btn').classList.remove('hidden');
+    document.getElementById('viz-pause-btn').classList.add('hidden');
+}
+
+function resetViz() {
+    stopVizPlayback();
+    vizCurrentStep = 0;
+    clearVizHighlights();
+    // Clear all slashes drawn during visualization
+    for (let r = 0; r < currentSize; r++) {
+        for (let c = 0; c < currentSize; c++) {
+            clearVizSlash(r, c);
+        }
+    }
+    document.getElementById('viz-log-content').innerHTML = '';
+    updateVizUI();
+    // Restore board to original state before visualization
+    if (currentState) renderBoard(currentState);
+}
+
+// Viz modal listeners are now in the solve-pick/viz-pick section at the top
+// Individual viz buttons removed — using modal selection instead
+document.getElementById('viz-play-btn').addEventListener('click', startVizPlayback);
+document.getElementById('viz-pause-btn').addEventListener('click', stopVizPlayback);
+document.getElementById('viz-step-btn').addEventListener('click', stepViz);
+document.getElementById('viz-reset-btn').addEventListener('click', resetViz);
+document.getElementById('viz-close-btn').addEventListener('click', () => {
+    stopVizPlayback();
+    clearVizHighlights();
+    document.getElementById('viz-panel').classList.add('hidden');
+    // Restore board to original state before visualization
+    if (currentState) renderBoard(currentState);
+});
+
+
 async function triggerCpuMove() {
     cpuMoveTimer = null;
     const wrapper = document.querySelector('.board-wrapper');
@@ -857,7 +1221,180 @@ async function triggerCpuMove() {
     }
 }
 
-// ... (keep rest)
+// ==============================================================================
+// BACKTRACK & FIX (animated recovery from FILLED_INVALID)
+// ==============================================================================
+
+let btFixSteps = [];
+let btFixIdx = 0;
+let btFixTimer = null;
+let btFixPlaying = false;
+
+async function startBacktrackFix() {
+    // Hide the Game Over overlay so the animation is visible
+    const wo = document.getElementById('win-overlay');
+    if (wo) wo.classList.add('hidden');
+
+    statusEl.textContent = "Running backtracking to fix board...";
+    statusEl.style.color = "#22d3ee";
+
+    try {
+        const res = await fetch(`${API_URL}/backtrack_fix`, { method: 'POST' });
+        const data = await res.json();
+
+        if (!data.success || !data.steps) {
+            statusEl.textContent = data.message || "Backtrack fix failed";
+            statusEl.style.color = "#ef4444";
+            playSound('error');
+            return;
+        }
+
+        btFixSteps = data.steps;
+        btFixIdx = 0;
+        const stats = data.stats || {};
+        const badCells = data.bad_cells || [];
+
+        // Only clear the BAD cells visually — keep correct moves on the board
+        document.querySelectorAll('.cell').forEach(cell => {
+            cell.classList.remove('in-loop', 'cell-try', 'cell-forced', 'cell-backtrack', 'cell-dead-end', 'cell-place');
+        });
+        for (const [r, c] of badCells) {
+            const el = getCellEl(r, c);
+            if (el) {
+                el.classList.remove('slash-L', 'slash-R', 'cpu-move');
+                el.classList.add('cell-backtrack'); // highlight cleared cells briefly
+            }
+        }
+
+        statusEl.textContent = `Fixing ${badCells.length} bad cells: 0/${btFixSteps.length} steps | Backtracks: ${stats.backtracks || 0}`;
+
+        // Show legend
+        showBacktrackLegend();
+
+        // Delay so user can see which cells were cleared, then start animation
+        btFixPlaying = true;
+        setTimeout(() => animateBacktrackFix(data), 1500);
+
+    } catch (e) {
+        console.error('Backtrack fix error:', e);
+        statusEl.textContent = "Backtrack fix error";
+        statusEl.style.color = "#ef4444";
+        playSound('error');
+    }
+}
+
+function animateBacktrackFix(data) {
+    const speed = 400; // ms per step — slow enough to follow each move
+    const stats = data.stats || {};
+
+    function tick() {
+        if (!btFixPlaying || btFixIdx >= btFixSteps.length) {
+            // Animation complete — show final solved board
+            btFixPlaying = false;
+            document.querySelectorAll('.cell').forEach(cell => {
+                cell.classList.remove('cell-try', 'cell-forced', 'cell-backtrack', 'cell-dead-end', 'cell-place');
+            });
+
+            if (data.state) {
+                currentState = data.state;
+            }
+
+            statusEl.textContent = `✓ Backtracking Complete! ${btFixSteps.length} steps, ${stats.backtracks || 0} backtracks`;
+            statusEl.style.color = "#4ade80";
+            hideBacktrackLegend();
+
+            // Render the solved board
+            if (data.state) {
+                renderBoard(currentState);
+                // Force hide the win overlay so the solved board stays visible
+                const wo = document.getElementById('win-overlay');
+                if (wo) wo.classList.add('hidden');
+            }
+
+            playSound('cpu');
+            return;
+        }
+
+        const step = btFixSteps[btFixIdx];
+        const { action, r, c, mv } = step;
+        const el = getCellEl(r, c);
+
+        if (el) {
+            // Clear previous highlights on this cell
+            el.classList.remove('cell-try', 'cell-forced', 'cell-backtrack', 'cell-dead-end', 'cell-place');
+
+            switch (action) {
+                case 'MRV_SELECT':
+                    el.classList.add('cell-try');
+                    break;
+                case 'TRY':
+                    el.classList.add('cell-try');
+                    setVizSlash(r, c, mv);
+                    break;
+                case 'FORCED':
+                    el.classList.add('cell-forced');
+                    setVizSlash(r, c, mv);
+                    break;
+                case 'INVALID':
+                    el.classList.add('cell-dead-end');
+                    setTimeout(() => el.classList.remove('cell-dead-end'), 400);
+                    break;
+                case 'BACKTRACK':
+                    el.classList.add('cell-backtrack');
+                    clearVizSlash(r, c);
+                    break;
+                case 'DEAD_END':
+                    el.classList.add('cell-dead-end');
+                    clearVizSlash(r, c);
+                    break;
+                case 'PLACE':
+                    el.classList.add('cell-place');
+                    setVizSlash(r, c, mv);
+                    break;
+                case 'SOLVED':
+                    break;
+            }
+        }
+
+        btFixIdx++;
+        statusEl.textContent = `Backtracking: ${btFixIdx}/${btFixSteps.length} steps | Backtracks: ${stats.backtracks || 0}`;
+
+        btFixTimer = setTimeout(tick, speed);
+    }
+
+    tick();
+}
+
+function showBacktrackLegend() {
+    let legend = document.getElementById('bt-legend');
+    if (!legend) {
+        legend = document.createElement('div');
+        legend.id = 'bt-legend';
+        legend.className = 'bt-legend';
+        legend.innerHTML = `
+            <div class="bt-legend-title">🔍 Backtracking Legend</div>
+            <div class="bt-legend-items">
+                <div class="bt-legend-item"><span class="bt-dot" style="background:#fbbf24"></span> Trying move</div>
+                <div class="bt-legend-item"><span class="bt-dot" style="background:#4ade80"></span> Forced (only option)</div>
+                <div class="bt-legend-item"><span class="bt-dot" style="background:#fb923c"></span> Backtracking</div>
+                <div class="bt-legend-item"><span class="bt-dot" style="background:#ef4444"></span> Dead end</div>
+                <div class="bt-legend-item"><span class="bt-dot" style="background:#22d3ee"></span> Placed</div>
+            </div>
+        `;
+        const wrapper = document.querySelector('.board-wrapper');
+        if (wrapper) {
+            wrapper.insertAdjacentElement('afterend', legend);
+        } else {
+            document.querySelector('.app-container').appendChild(legend);
+        }
+    }
+    legend.classList.remove('hidden');
+}
+
+function hideBacktrackLegend() {
+    const legend = document.getElementById('bt-legend');
+    if (legend) legend.classList.add('hidden');
+}
 
 async function undoLastMove() {
     try {
@@ -898,6 +1435,7 @@ async function solveGame() {
 }
 
 async function solveDP() {
+    selectedSolver = 'dp';
     statusEl.textContent = "Solving with Dynamic Programming...";
     try {
         const response = await fetch(`${API_URL}/solve_dp`, { method: 'POST' });
@@ -919,6 +1457,7 @@ async function solveDP() {
 }
 
 async function solveDnC() {
+    selectedSolver = 'dnc';
     statusEl.textContent = "Solving with Divide & Conquer...";
     try {
         const response = await fetch(`${API_URL}/solve_dnc`, { method: 'POST' });
@@ -939,28 +1478,10 @@ async function solveDnC() {
     }
 }
 
-async function solveBoundaryCut() {
-    statusEl.textContent = "Solving with Minimum-Boundary Cut...";
-    try {
-        const response = await fetch(`${API_URL}/solve_boundary_cut`, { method: 'POST' });
-        const data = await response.json();
 
-        if (data.success) {
-            currentState = data.state;
-            renderBoard(currentState);
-            statusEl.textContent = data.message || "Solved with Boundary Cut!";
-            playSound('cpu');
-        } else {
-            statusEl.textContent = data.message || "Boundary Cut Solver: No Solution Found";
-            playSound('error');
-        }
-    } catch (e) {
-        console.error(e);
-        statusEl.textContent = "Boundary Cut Solver Error";
-    }
-}
 
 async function solveHybrid() {
+    selectedSolver = 'hybrid';
     statusEl.textContent = "Solving with Hybrid DP + D&C...";
     try {
         const response = await fetch(`${API_URL}/solve_hybrid`, { method: 'POST' });
@@ -981,168 +1502,73 @@ async function solveHybrid() {
     }
 }
 
+async function solveMRV() {
+    selectedSolver = 'mrv';
+    statusEl.textContent = "Solving with MRV Backtracking...";
+    try {
+        const response = await fetch(`${API_URL}/solve_mrv`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            currentState = data.state;
+            renderBoard(currentState);
+            statusEl.textContent = data.message || "Solved with MRV!";
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "MRV Solver: No Solution Found";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = "MRV Solver Error";
+    }
+}
+
+async function solveCBJ() {
+    selectedSolver = 'cbj';
+    statusEl.textContent = "Solving with Conflict-Directed Backjumping...";
+    try {
+        const response = await fetch(`${API_URL}/solve_cbj`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            currentState = data.state;
+            renderBoard(currentState);
+            statusEl.textContent = data.message || "Solved with CBJ!";
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "CBJ Solver: No Solution Found";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = "CBJ Solver Error";
+    }
+}
+
+async function solveFC() {
+    selectedSolver = 'fc';
+    statusEl.textContent = "Solving with Forward Checking...";
+    try {
+        const response = await fetch(`${API_URL}/solve_fc`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            currentState = data.state;
+            renderBoard(currentState);
+            statusEl.textContent = data.message || "Solved with FC!";
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "FC Solver: No Solution Found";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = "FC Solver Error";
+    }
+}
+
 function getReason(data) {
     // maybe backend sends specific error?
     return "";
 }
-
-// ==============================================================================
-// REVIEW FEATURE
-// ==============================================================================
-
-async function reviewMoves() {
-    try {
-        statusEl.textContent = "Analyzing moves...";
-
-        const response = await fetch(`${API_URL}/review`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            displayReviewResults(data);
-            highlightInvalidCells(data.move_reviews || []);
-            playSound('cpu');
-        } else {
-            statusEl.textContent = data.message || "Review failed";
-            playSound('error');
-        }
-    } catch (e) {
-        console.error('Review error:', e);
-        statusEl.textContent = "Review Error";
-        playSound('error');
-    }
-}
-
-function displayReviewResults(data) {
-    const reviewModal = document.getElementById('review-modal');
-    const reviewResults = document.getElementById('review-results');
-
-    if (!data.move_reviews || data.move_reviews.length === 0) {
-        reviewResults.innerHTML = `
-            <div class="success-message">
-                <div style="font-size: 2rem; margin-bottom: 0.5rem;">📝</div>
-                No moves to review yet!<br>
-                <span style="font-size: 0.9rem; opacity: 0.7;">Make some moves to see analysis.</span>
-            </div>
-        `;
-    } else {
-        // Calculate accuracy
-        const total = data.total_moves;
-        const incorrect = data.incorrect_count;
-        const correct = total - incorrect;
-        const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
-        
-        let headerColor = incorrect === 0 ? 'var(--constraint-satisfied)' : 'var(--constraint-unsatisfied)';
-        let headerText = incorrect === 0 ? 'Perfect Game!' : `${incorrect} Mistake${incorrect === 1 ? '' : 's'}`;
-        
-        let html = `
-            <div class="review-header" style="text-align: center; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem;">
-                <div style="font-size: 2.5rem; font-weight: 700; color: ${headerColor}; margin-bottom: 0.2rem;">
-                    ${headerText}
-                </div>
-                <div style="font-size: 1rem; color: var(--text-muted);">
-                    ${total} Total Moves • ${accuracy}% Accuracy
-                </div>
-            </div>
-            
-            <div class="review-list-container">
-                <ul class="review-list">
-        `;
-
-        data.move_reviews.forEach((move, index) => {
-            const isCorrect = move.correct;
-            const statusClass = isCorrect ? 'correct' : 'incorrect';
-            const statusIcon = isCorrect ? '✓' : '✗';
-            
-            html += `
-                <li class="review-item ${statusClass}">
-                    <span class="move-num">#${move.move_number}</span>
-                    <span class="move-coords">${move.cell}</span>
-                    <span class="move-player">${move.player === 'HUMAN' ? 'YOU' : 'CPU'}</span>
-                    <span class="move-status">${statusIcon}</span>
-                </li>
-            `;
-        });
-
-        html += `
-                </ul>
-            </div>
-        `;
-        reviewResults.innerHTML = html;
-    }
-
-    reviewModal.classList.remove('hidden');
-    // Update simple status text as fallback/supplement
-    statusEl.textContent = data.incorrect_count === 0 ? "Review: Perfect!" : `Review: ${data.incorrect_count} mistakes found`;
-}
-
-function highlightInvalidCells(moveReviews) {
-    // First, clear any existing highlights
-    document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
-        cell.classList.remove('cell-correct', 'cell-incorrect');
-    });
-
-    // Highlight cells based on correctness
-    if (moveReviews && moveReviews.length > 0) {
-        moveReviews.forEach(move => {
-            const cell = findCellByChessCoordinate(move.cell);
-            if (cell) {
-                if (move.correct) {
-                    cell.classList.add('cell-correct');
-                } else {
-                    cell.classList.add('cell-incorrect');
-                }
-            }
-        });
-    }
-}
-
-function findCellByChessCoordinate(chessCoord) {
-    // Parse chess coordinate (e.g., "A5" -> col=0, row=0 for 5x5 board)
-    // Chess style: A-E columns (left to right), 1-5 rows (bottom to top)
-    const col = chessCoord.charCodeAt(0) - 'A'.charCodeAt(0);
-    const rowNumber = parseInt(chessCoord.substring(1));
-
-    // Convert chess row (bottom-to-top) to grid row (top-to-bottom)
-    const row = currentState.size - rowNumber;
-
-    // Find cell in DOM
-    const cells = document.querySelectorAll('.cell');
-    const index = row * currentState.size + col;
-
-    return cells[index] || null;
-}
-
-// Review modal close handler
-document.addEventListener('DOMContentLoaded', () => {
-    const reviewModal = document.getElementById('review-modal');
-    const closeReviewBtn = document.getElementById('close-review-btn');
-
-    if (closeReviewBtn) {
-        closeReviewBtn.addEventListener('click', () => {
-            reviewModal.classList.add('hidden');
-            // Clear highlights when closing
-            document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
-                cell.classList.remove('cell-correct', 'cell-incorrect');
-            });
-            playSound('clear');
-        });
-    }
-
-    // Close on background click
-    if (reviewModal) {
-        reviewModal.addEventListener('click', (e) => {
-            if (e.target === reviewModal) {
-                reviewModal.classList.add('hidden');
-                // Clear highlights when closing
-                document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
-                    cell.classList.remove('cell-correct', 'cell-incorrect');
-                });
-                playSound('clear');
-            }
-        });
-    }
-});
