@@ -1572,3 +1572,474 @@ function getReason(data) {
     // maybe backend sends specific error?
     return "";
 }
+
+async function reviewMoves() {
+    try {
+        statusEl.textContent = "Analyzing moves...";
+
+        const response = await fetch(`${API_URL}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            displayReviewResults(data);
+            highlightInvalidCells(data.move_reviews || []);
+            playSound('cpu');
+        } else {
+            statusEl.textContent = data.message || "Review failed";
+            playSound('error');
+        }
+    } catch (e) {
+        console.error('Review error:', e);
+        statusEl.textContent = "Review Error";
+        playSound('error');
+    }
+}
+
+function displayReviewResults(data) {
+    const reviewModal = document.getElementById('review-modal');
+    const reviewResults = document.getElementById('review-results');
+
+    if (!data.move_reviews || data.move_reviews.length === 0) {
+        reviewResults.innerHTML = `
+            <div class="success-message">
+                ✓ No moves to review yet!<br>
+                Start playing to see move analysis.
+            </div>
+        `;
+    } else if (data.incorrect_count === 0) {
+        reviewResults.innerHTML = `
+            <div class="success-message">
+                ✓ All moves were correct!<br>
+                Total moves: ${data.total_moves}
+            </div>
+        `;
+    } else {
+        let html = `<h3>Move Analysis: ${data.incorrect_count} incorrect / ${data.total_moves} total</h3><ul>`;
+
+        data.move_reviews.forEach(move => {
+            const statusIcon = move.correct ? '✔' : '✘';
+            const statusClass = move.correct ? 'review-correct' : 'review-incorrect';
+            const statusText = move.correct ? 'Correct' : 'Incorrect';
+
+            html += `<li>Move ${move.move_number} – <strong>${move.cell}</strong> – ${move.player} – <span class="${statusClass}">${statusIcon} ${statusText}</span></li>`;
+        });
+
+        html += '</ul>';
+        reviewResults.innerHTML = html;
+    }
+
+    reviewModal.classList.remove('hidden');
+    statusEl.textContent = `Review Complete: ${data.incorrect_count} incorrect move(s)`;
+}
+
+function highlightInvalidCells(moveReviews) {
+    // First, clear any existing highlights
+    document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
+        cell.classList.remove('cell-correct', 'cell-incorrect');
+    });
+
+    // Highlight cells based on correctness
+    if (moveReviews && moveReviews.length > 0) {
+        moveReviews.forEach(move => {
+            const cell = findCellByChessCoordinate(move.cell);
+            if (cell) {
+                if (move.correct) {
+                    cell.classList.add('cell-correct');
+                } else {
+                    cell.classList.add('cell-incorrect');
+                }
+            }
+        });
+    }
+}
+
+function findCellByChessCoordinate(chessCoord) {
+    // Parse chess coordinate (e.g., "A5" -> col=0, row=0 for 5x5 board)
+    // Chess style: A-E columns (left to right), 1-5 rows (bottom to top)
+    const col = chessCoord.charCodeAt(0) - 'A'.charCodeAt(0);
+    const rowNumber = parseInt(chessCoord.substring(1));
+
+    // Convert chess row (bottom-to-top) to grid row (top-to-bottom)
+    const row = currentState.size - rowNumber;
+
+    // Find cell in DOM
+    const cells = document.querySelectorAll('.cell');
+    const index = row * currentState.size + col;
+
+    return cells[index] || null;
+}
+
+// Review modal close handler
+document.addEventListener('DOMContentLoaded', () => {
+    const reviewModal = document.getElementById('review-modal');
+    const closeReviewBtn = document.getElementById('close-review-btn');
+
+    if (closeReviewBtn) {
+        closeReviewBtn.addEventListener('click', () => {
+            reviewModal.classList.add('hidden');
+            // Clear highlights when closing
+            document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
+                cell.classList.remove('cell-correct', 'cell-incorrect');
+            });
+            playSound('clear');
+        });
+    }
+
+    // Close on background click
+    if (reviewModal) {
+        reviewModal.addEventListener('click', (e) => {
+            if (e.target === reviewModal) {
+                reviewModal.classList.add('hidden');
+                // Clear highlights when closing
+                document.querySelectorAll('.cell-correct, .cell-incorrect').forEach(cell => {
+                    cell.classList.remove('cell-correct', 'cell-incorrect');
+                });
+                playSound('clear');
+            }
+        });
+    }
+});
+
+// ==============================================================================
+// COMPARISON CHARTS
+// ==============================================================================
+
+const CHART_COLORS = {
+    'dp': '#a78bfa',
+    'dnc': '#2dd4bf',
+    'hybrid': '#f43f5e',
+    'mrv': '#818cf8',
+    'cbj': '#fbbf24',
+    'fc': '#f472b6'
+};
+
+async function loadComparisonCharts() {
+    const container = document.getElementById('compare-charts');
+    if (!container) return;
+
+    try {
+        const res = await fetch(`${API_URL}/compare_solvers`, { method: 'POST' });
+        const data = await res.json();
+        if (!data.success || !data.results) return;
+
+        const results = data.results;
+
+        // Time chart
+        const timeData = results
+            .filter(r => r.time_ms >= 0)
+            .map(r => ({ label: r.label, value: r.time_ms, key: r.key }));
+        renderLineChart('time-chart', timeData, 'ms');
+
+        // Space chart
+        const spaceData = results
+            .filter(r => r.space > 0)
+            .map(r => ({ label: r.label, value: r.space, key: r.key }));
+        renderBarChart('space-chart', spaceData, 'units');
+
+        // Complexity chart (Big-O curves)
+        renderComplexityChart('complexity-chart', data.board_size);
+
+        container.classList.remove('hidden');
+    } catch (e) {
+        console.error('Chart load error:', e);
+    }
+}
+
+function renderBarChart(containerId, data, unit) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+
+    const maxVal = Math.max(...data.map(d => d.value), 1);
+
+    for (const item of data) {
+        const row = document.createElement('div');
+        row.className = 'chart-row';
+
+        const label = document.createElement('div');
+        label.className = 'chart-label';
+        label.textContent = item.label;
+
+        const barWrap = document.createElement('div');
+        barWrap.className = 'chart-bar-wrap';
+
+        const bar = document.createElement('div');
+        bar.className = 'chart-bar';
+        const pct = Math.max((item.value / maxVal) * 100, 4);
+        bar.style.width = pct + '%';
+        bar.style.background = CHART_COLORS[item.key] || '#60a5fa';
+
+        const val = document.createElement('span');
+        val.className = 'chart-value';
+        val.textContent = unit === 'ms' ? item.value.toFixed(2) + ' ms' : item.value.toLocaleString();
+
+        barWrap.appendChild(bar);
+        barWrap.appendChild(val);
+        row.appendChild(label);
+        row.appendChild(barWrap);
+        container.appendChild(row);
+    }
+}
+
+function renderLineChart(containerId, data, unit) {
+    const container = document.getElementById(containerId);
+    if (!container || !data.length) return;
+    container.innerHTML = '';
+
+    const W = 480, H = 260;
+    const pad = { top: 30, right: 30, bottom: 60, left: 65 };
+    const plotW = W - pad.left - pad.right;
+    const plotH = H - pad.top - pad.bottom;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W * 2;  // retina
+    canvas.height = H * 2;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    container.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+
+    const maxVal = Math.max(...data.map(d => d.value), 0.1) * 1.15;
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1;
+    const gridLines = 5;
+    for (let i = 0; i <= gridLines; i++) {
+        const y = pad.top + (plotH / gridLines) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(W - pad.right, y);
+        ctx.stroke();
+
+        // Y-axis labels
+        const val = maxVal - (maxVal / gridLines) * i;
+        ctx.fillStyle = '#8892b0';
+        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(val.toFixed(1), pad.left - 8, y + 3);
+    }
+
+    // Points
+    const points = data.map((d, i) => {
+        const x = pad.left + (plotW / (data.length - 1 || 1)) * i;
+        const y = pad.top + plotH - (d.value / maxVal) * plotH;
+        return { x, y, ...d };
+    });
+
+    // Gradient fill under line
+    const gradient = ctx.createLinearGradient(0, pad.top, 0, pad.top + plotH);
+    gradient.addColorStop(0, 'rgba(34, 211, 238, 0.25)');
+    gradient.addColorStop(1, 'rgba(34, 211, 238, 0.02)');
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, pad.top + plotH);
+    for (const p of points) ctx.lineTo(p.x, p.y);
+    ctx.lineTo(points[points.length - 1].x, pad.top + plotH);
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Dots + labels
+    for (const p of points) {
+        const color = CHART_COLORS[p.key] || '#22d3ee';
+        // Dot
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Value above dot
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.value.toFixed(2) + ' ms', p.x, p.y - 12);
+
+        // Solver label below x-axis
+        ctx.fillStyle = color;
+        ctx.font = '9px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        // Truncate long labels
+        const short = p.label.length > 12 ? p.label.slice(0, 11) + '…' : p.label;
+        ctx.fillText(short, p.x, pad.top + plotH + 16);
+    }
+
+    // Y-axis title
+    ctx.save();
+    ctx.translate(14, pad.top + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Time (ms)', 0, 0);
+    ctx.restore();
+}
+
+function renderComplexityChart(containerId, boardSize) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+
+    const W = 480, H = 300;
+    const pad = { top: 25, right: 100, bottom: 55, left: 55 };
+    const plotW = W - pad.left - pad.right;
+    const plotH = H - pad.top - pad.bottom;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W * 2;
+    canvas.height = H * 2;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    container.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+
+    // Theoretical complexity functions (normalized)
+    const algorithms = [
+        { key: 'dp', label: 'DP: O(2\u207F\u00B7n\u00B2)', fn: n => Math.pow(2, n) * n * n },
+        { key: 'dnc', label: 'DnC: O(4\u00B7n\u00B2)', fn: n => 4 * n * n },
+        { key: 'hybrid', label: 'Hybrid: O(2^(n/2)\u00B7n\u00B2)', fn: n => Math.pow(2, n / 2) * n * n },
+        { key: 'mrv', label: 'MRV: O(n\u00B3)', fn: n => n * n * n },
+        { key: 'cbj', label: 'CBJ: O(2\u00B7n\u00B3)', fn: n => 2 * n * n * n },
+        { key: 'fc', label: 'FC: O(2\u00B7n\u00B3)', fn: n => 2 * n * n * n },
+    ];
+
+    const maxN = Math.max(boardSize + 2, 10);
+    const nValues = [];
+    for (let n = 1; n <= maxN; n++) nValues.push(n);
+
+    // Use log scale for Y since exponential grows much faster
+    const allVals = [];
+    for (const algo of algorithms) {
+        for (const n of nValues) allVals.push(algo.fn(n));
+    }
+    const maxY = Math.max(...allVals);
+    const logMax = Math.log10(maxY + 1);
+
+    // Helper to map (n, val) to canvas coords
+    const toX = n => pad.left + ((n - 1) / (maxN - 1)) * plotW;
+    const toY = val => {
+        const logVal = Math.log10(val + 1);
+        return pad.top + plotH - (logVal / logMax) * plotH;
+    };
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    const gridSteps = 5;
+    for (let i = 0; i <= gridSteps; i++) {
+        const y = pad.top + (plotH / gridSteps) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(W - pad.right, y);
+        ctx.stroke();
+
+        // Y-axis log labels
+        const logVal = logMax - (logMax / gridSteps) * i;
+        ctx.fillStyle = '#8892b0';
+        ctx.font = '9px JetBrains Mono, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('10^' + logVal.toFixed(1), pad.left - 6, y + 3);
+    }
+
+    // X-axis labels
+    for (const n of nValues) {
+        if (n % 2 === 1 || n === maxN) {
+            const x = toX(n);
+            ctx.fillStyle = '#8892b0';
+            ctx.font = '9px JetBrains Mono, monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(n.toString(), x, pad.top + plotH + 14);
+        }
+    }
+
+    // Vertical marker for current board size
+    const markerX = toX(boardSize);
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(markerX, pad.top);
+    ctx.lineTo(markerX, pad.top + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 9px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('n=' + boardSize, markerX, pad.top + plotH + 28);
+
+    // Draw curves
+    for (const algo of algorithms) {
+        const color = CHART_COLORS[algo.key] || '#60a5fa';
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+
+        for (let i = 0; i < nValues.length; i++) {
+            const x = toX(nValues[i]);
+            const y = toY(algo.fn(nValues[i]));
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // Big-O label at end of line
+        const lastX = toX(nValues[nValues.length - 1]);
+        const lastY = toY(algo.fn(nValues[nValues.length - 1]));
+        ctx.fillStyle = color;
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(algo.label.split(': ')[1] || algo.label, lastX + 5, lastY + 3);
+    }
+
+    // Legend below chart
+    const legendY = pad.top + plotH + 36;
+    let legendX = pad.left;
+    ctx.font = '9px Inter, sans-serif';
+    for (const algo of algorithms) {
+        const color = CHART_COLORS[algo.key] || '#60a5fa';
+        // dot
+        ctx.fillStyle = color;
+        ctx.fillRect(legendX, legendY, 8, 8);
+        // text
+        ctx.fillStyle = '#cbd5e1';
+        ctx.textAlign = 'left';
+        ctx.fillText(algo.label, legendX + 11, legendY + 7);
+        legendX += ctx.measureText(algo.label).width + 20;
+    }
+
+    // Axis titles
+    ctx.fillStyle = '#64748b';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Board Size (n)', pad.left + plotW / 2, pad.top + plotH + 14);
+
+    ctx.save();
+    ctx.translate(12, pad.top + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Operations (log scale)', 0, 0);
+    ctx.restore();
+}
+
+
