@@ -9,6 +9,7 @@ then follows that solution move-by-move during gameplay.
 """
 
 import copy
+import threading
 
 
 class AlgorithmicAI:
@@ -36,32 +37,68 @@ class AlgorithmicAI:
         self.solution_grid = None
         self.solution_computed = False
         
-    def compute_solution(self):
+    def compute_solution(self, timeout=10):
         """
-        Precompute full solution using selected solver.
+        Precompute full solution using selected solver with timeout.
+        
+        Runs the solver in a daemon thread. If it doesn't finish within
+        `timeout` seconds, returns False (CPU passes turn).
+        
+        Args:
+            timeout: Maximum seconds to allow the solver to run (default: 10)
         
         Returns:
-            bool: True if solution found, False otherwise
+            bool: True if solution found, False otherwise (including timeout)
         """
-        if self.solver_type == 'dp':
-            from dp_solver import solve_and_extract
-            success, solution = solve_and_extract(self.game, use_enhanced=True)
-        elif self.solver_type == 'dnc':
-            from dnc_solver import solve_and_extract_dnc
-            success, solution = solve_and_extract_dnc(self.game)
-        elif self.solver_type == 'hybrid':
-            from dnc_solver import solve_and_extract_hybrid
-            success, solution = solve_and_extract_hybrid(self.game)
-        elif self.solver_type == 'cut':
-            from dnc_solver import solve_and_extract_cut
-            success, solution = solve_and_extract_cut(self.game)
-        else:
-            # Default to DP if unknown solver type
-            from dp_solver import solve_and_extract
-            success, solution = solve_and_extract(self.game, use_enhanced=True)
+        result = {'success': False, 'solution': None}
         
-        if success:
-            self.solution_grid = solution
+        def _run_solver():
+            try:
+                if self.solver_type == 'dp':
+                    from dp_solver import solve_and_extract
+                    s, sol = solve_and_extract(self.game, use_enhanced=True)
+                elif self.solver_type == 'dnc':
+                    from dnc_solver import solve_and_extract_dnc
+                    s, sol = solve_and_extract_dnc(self.game)
+                elif self.solver_type == 'hybrid':
+                    from dnc_solver import solve_and_extract_hybrid
+                    s, sol = solve_and_extract_hybrid(self.game)
+                elif self.solver_type == 'cut':
+                    from dnc_solver import solve_and_extract_cut
+                    s, sol = solve_and_extract_cut(self.game)
+                elif self.solver_type == 'mrv':
+                    from mrv_solver import solve_and_extract
+                    s, sol = solve_and_extract(self.game)
+                elif self.solver_type == 'cbj':
+                    from cbj_solver import solve_and_extract
+                    s, sol = solve_and_extract(self.game)
+                elif self.solver_type == 'fc':
+                    from fc_solver import solve_and_extract
+                    s, sol = solve_and_extract(self.game)
+                else:
+                    from dp_solver import solve_and_extract
+                    s, sol = solve_and_extract(self.game, use_enhanced=True)
+                result['success'] = s
+                result['solution'] = sol
+            except Exception as e:
+                print(f"[CPU_AI] Solver error: {e}")
+                result['success'] = False
+                result['solution'] = None
+        
+        solver_thread = threading.Thread(target=_run_solver, daemon=True)
+        solver_thread.start()
+        solver_thread.join(timeout=timeout)
+        
+        if solver_thread.is_alive():
+            # Solver timed out — it will keep running in daemon thread
+            # but we return False immediately
+            print(f"[CPU_AI] Solver timed out after {timeout}s")
+            self.solution_grid = None
+            self.solution_computed = False
+            return False
+        
+        if result['success']:
+            self.solution_grid = result['solution']
             self.solution_computed = True
             return True
         else:
@@ -74,27 +111,33 @@ class AlgorithmicAI:
         Get next move from precomputed solution.
         
         Finds the first empty cell and returns the solution move for it.
-        NO evaluation, NO scoring, NO greedy decision.
+        If no valid solution exists, tries to find a valid move using
+        is_move_valid before falling back to a forced move.
         
         Returns:
-            tuple: (r, c, move_type) or None if no move available
+            tuple: (r, c, move_type) or None if board is already full
         """
-        # If solution not computed yet, compute it
+        # Try to compute solution if not done yet
         if not self.solution_computed:
-            if not self.compute_solution():
-                return None  # No solution exists
+            self.compute_solution()  # May fail — that's ok, we'll force moves
         
         # Find first empty cell
         for r in range(self.game.size):
             for c in range(self.game.size):
                 if self.game.grid[r][c] is None:
-                    # Return solution move for this cell
+                    # If we have a valid solution, use it
                     if self.solution_grid and r < len(self.solution_grid) and c < len(self.solution_grid[r]):
                         move_type = self.solution_grid[r][c]
                         if move_type in ['L', 'R']:
                             return (r, c, move_type)
+                    # No solution — try to find a valid move first
+                    for mv in ['L', 'R']:
+                        if self.game.is_move_valid(r, c, mv):
+                            return (r, c, mv)
+                    # Neither is valid — force 'L' to fill the board
+                    return (r, c, 'L')
         
-        # No empty cells found
+        # No empty cells found — board is full
         return None
     
     def recompute_if_deviated(self):
@@ -102,11 +145,11 @@ class AlgorithmicAI:
         Check if current game state matches precomputed solution.
         If user deviated, recompute solution.
         
-        Returns:
-            bool: True if recomputation successful or not needed
+        Always returns True — CPU will force moves even without a solution.
         """
         if not self.solution_computed:
-            return self.compute_solution()
+            self.compute_solution()  # Try, but don't fail if it can't solve
+            return True
         
         # Check if current state matches solution
         deviated = False
@@ -122,8 +165,8 @@ class AlgorithmicAI:
                 break
         
         if deviated:
-            # Recompute solution from current state
-            return self.compute_solution()
+            # Recompute solution from current state (may fail — that's ok)
+            self.compute_solution()
         
         return True
 
